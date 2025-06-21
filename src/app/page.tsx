@@ -1,285 +1,457 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { LifeTreeNode, TreeStats } from '@/types/tree';
+import React, { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 
-export default function Home() {
-  const [tree, setTree] = useState<LifeTreeNode | null>(null);
-  const [stats, setStats] = useState<TreeStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState('');
+const GridMarkers = ({
+  viewBox,
+  dateToX,
+  timelineStartDate,
+  pixelsPerDay,
+  paddingLeft,
+  timelineHeight,
+}: {
+  viewBox: { x: number; y: number; w: number; h: number };
+  dateToX: (date: Date) => number;
+  timelineStartDate: Date;
+  pixelsPerDay: number;
+  paddingLeft: number;
+  timelineHeight: number;
+}) => {
+  const markers: React.ReactNode[] = [];
 
-  useEffect(() => {
-    loadTreeData();
-  }, []);
+  const visibleStartMs =
+    timelineStartDate.getTime() +
+    ((viewBox.x - paddingLeft) / pixelsPerDay) * (1000 * 60 * 60 * 24);
+  const visibleDays = viewBox.w / pixelsPerDay;
+  const visibleEndMs = visibleStartMs + visibleDays * (1000 * 60 * 60 * 24);
+  const visibleYears = visibleDays / 365;
 
-  const loadTreeData = async () => {
-    try {
-      setLoading(true);
-      const [treeResponse, statsResponse] = await Promise.all([
-        fetch('/api/tree'),
-        fetch('/api/tree?action=stats')
-      ]);
-      
-      const treeData = await treeResponse.json();
-      const statsData = await statsResponse.json();
-      
-      setTree(treeData);
-      setStats(statsData);
-    } catch (error) {
-      console.error('Error loading tree data:', error);
-      setMessage('Error loading tree data');
-    } finally {
-      setLoading(false);
-    }
+  if (visibleYears > 200) {
+    return null; // Hide everything if zoomed out too far
+  }
+
+  const startDate = new Date(visibleStartMs);
+  const endDate = new Date(visibleEndMs);
+
+  const baseFontSize = 16;
+  const referenceWidth = 1920; // A standard reference viewport width
+  const responsiveFontSize = baseFontSize * (viewBox.w / referenceWidth);
+
+  const textStyle: React.SVGProps<SVGTextElement> = {
+    fill: 'white',
+    fontFamily: 'serif',
+    dominantBaseline: 'text-before-edge',
+    fontSize: responsiveFontSize,
   };
 
-  const generateSampleData = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch('/api/tree/sample', { method: 'POST' });
-      const result = await response.json();
-      
-      if (result.success) {
-        setMessage(result.message);
-        await loadTreeData(); // Reload the data
+  const addMarker = (date: Date, label: string, strokeWidth: number, key: string) => {
+    const x = dateToX(date);
+    
+    // Don't show any markers before the birthday
+    if (date.getTime() < timelineStartDate.getTime()) {
+      return;
+    }
+    
+    const showWhiteTick = date.getTime() <= new Date().getTime(); // Only show white ticks up to present
+    
+    markers.push(
+      <g key={key}>
+        <line
+          x1={x}
+          y1={viewBox.y - viewBox.h}
+          x2={x}
+          y2={viewBox.y + viewBox.h * 2}
+          stroke="#444"
+          strokeWidth={strokeWidth * 2}
+          vectorEffect="non-scaling-stroke"
+        />
+        {showWhiteTick && (
+          <line
+            x1={x}
+            y1={timelineHeight / 2 - 15 * (viewBox.w / 1920)}
+            x2={x}
+            y2={timelineHeight / 2 + 15 * (viewBox.w / 1920)}
+            stroke="white"
+            strokeWidth={(strokeWidth + 0.5) * 2}
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
+      </g>
+    );
+  };
+  
+  if (visibleYears > 50) {
+    let year = Math.floor(startDate.getFullYear() / 10) * 10;
+    for (let d = new Date(year, 0, 1); d.getFullYear() <= endDate.getFullYear(); d.setFullYear(d.getFullYear() + 10)) {
+      addMarker(d, `${d.getFullYear()}`, 1, `10y-${d.getFullYear()}`);
+    }
+  } else if (visibleYears > 20) {
+    let year = Math.floor(startDate.getFullYear() / 5) * 5;
+    for (let d = new Date(year, 0, 1); d.getFullYear() <= endDate.getFullYear(); d.setFullYear(d.getFullYear() + 5)) {
+      addMarker(d, `${d.getFullYear()}`, 1, `5y-${d.getFullYear()}`);
+    }
+  } else if (visibleYears > 1) {
+     for (let year = startDate.getFullYear(); year <= endDate.getFullYear(); year++) {
+        addMarker(new Date(year, 0, 1), `${year}`, 0.75, `1y-${year}`);
+     }
+  } else if (visibleDays > 30) {
+    let d = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+    for (; d.getTime() <= visibleEndMs; d.setMonth(d.getMonth() + 1)) {
+      const label = `${d.toLocaleString('default', { month: 'short' })}-${d.getFullYear()}`;
+      addMarker(d, label, 0.5, `month-${d.toISOString()}`);
+    }
+  } else if (visibleDays > 1) {
+    let d = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+    for (; d.getTime() <= visibleEndMs; d.setDate(d.getDate() + 1)) {
+      const label = `${d.getDate()}-${d.toLocaleString('default', { month: 'short' })}-${d.getFullYear()}`;
+      addMarker(d, label, 0.25, `day-${d.toISOString()}`);
+    }
       } else {
-        setMessage('Failed to generate sample data');
-      }
-    } catch (error) {
-      console.error('Error generating sample data:', error);
-      setMessage('Error generating sample data');
-    } finally {
-      setLoading(false);
+    let d = new Date(startDate.getTime());
+    d.setMinutes(0,0,0);
+    for (; d.getTime() <= visibleEndMs; d.setHours(d.getHours() + 1)) {
+      const label = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+      addMarker(d, label, 0.25, `hour-${d.toISOString()}`);
     }
+  }
+
+  return <>{markers}</>;
+};
+
+const TimeLabels = ({
+  viewBox,
+  dateToX,
+  timelineStartDate,
+  pixelsPerDay,
+  paddingLeft,
+  svgRef,
+}: {
+  viewBox: { x: number; y: number; w: number; h: number };
+  dateToX: (date: Date) => number;
+  timelineStartDate: Date;
+  pixelsPerDay: number;
+  paddingLeft: number;
+  svgRef: React.RefObject<SVGSVGElement | null>;
+}) => {
+  const labels: { x: number; text: string; key: string }[] = [];
+
+  const visibleStartMs =
+    timelineStartDate.getTime() +
+    ((viewBox.x - paddingLeft) / pixelsPerDay) * (1000 * 60 * 60 * 24);
+  const visibleDays = viewBox.w / pixelsPerDay;
+  const visibleEndMs = visibleStartMs + visibleDays * (1000 * 60 * 60 * 24);
+  const visibleYears = visibleDays / 365;
+
+  if (visibleYears > 200) {
+    return null;
+  }
+
+  const startDate = new Date(visibleStartMs);
+  const endDate = new Date(visibleEndMs);
+
+  const addLabel = (date: Date, text: string, key: string) => {
+    // Don't show any labels before the birthday
+    if (date.getTime() < timelineStartDate.getTime()) {
+      return;
+    }
+    
+    const svgX = dateToX(date);
+    labels.push({ x: svgX, text, key });
   };
 
-  const setupVapiAssistant = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch('/api/vapi/setup', { method: 'POST' });
-      const result = await response.json();
-      
-      if (result.success) {
-        setMessage(`Vapi Assistant created: ${result.assistant.name} (ID: ${result.assistant.id})`);
+  if (visibleYears > 50) {
+    let year = Math.floor(startDate.getFullYear() / 10) * 10;
+    for (let d = new Date(year, 0, 1); d.getFullYear() <= endDate.getFullYear(); d.setFullYear(d.getFullYear() + 10)) {
+      addLabel(d, `${d.getFullYear()}`, `10y-${d.getFullYear()}`);
+    }
+  } else if (visibleYears > 20) {
+    let year = Math.floor(startDate.getFullYear() / 5) * 5;
+    for (let d = new Date(year, 0, 1); d.getFullYear() <= endDate.getFullYear(); d.setFullYear(d.getFullYear() + 5)) {
+      addLabel(d, `${d.getFullYear()}`, `5y-${d.getFullYear()}`);
+    }
+  } else if (visibleYears > 1) {
+    for (let year = startDate.getFullYear(); year <= endDate.getFullYear(); year++) {
+      addLabel(new Date(year, 0, 1), `${year}`, `1y-${year}`);
+    }
+  } else if (visibleDays > 30) {
+    let d = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+    for (; d.getTime() <= visibleEndMs; d.setMonth(d.getMonth() + 1)) {
+      addLabel(d, `${d.toLocaleString('default', { month: 'short' })}-${d.getFullYear()}`, `m-${d.toISOString()}`);
+    }
+  } else if (visibleDays > 1) {
+    let d = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+    for (; d.getTime() <= visibleEndMs; d.setDate(d.getDate() + 1)) {
+      addLabel(d, `${d.getDate()}-${d.toLocaleString('default', { month: 'short' })}-${d.getFullYear()}`, `d-${d.toISOString()}`);
+    }
       } else {
-        setMessage(`Failed to create Vapi Assistant: ${result.error}`);
-      }
-    } catch (error) {
-      console.error('Error setting up Vapi assistant:', error);
-      setMessage('Error setting up Vapi assistant');
-    } finally {
-      setLoading(false);
+    let d = new Date(startDate.getTime());
+    d.setMinutes(0,0,0);
+    for (; d.getTime() <= visibleEndMs; d.setHours(d.getHours() + 1)) {
+      addLabel(d, `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`, `h-${d.toISOString()}`);
     }
+  }
+
+  const convertSvgToScreenX = (svgX: number) => {
+    if (!svgRef.current) return 0;
+    const svg = svgRef.current;
+    const rect = svg.getBoundingClientRect();
+    
+    // Calculate the screen X position based on the viewBox and SVG dimensions
+    const svgWidth = rect.width;
+    const viewBoxWidth = viewBox.w;
+    const viewBoxX = viewBox.x;
+    
+    // Convert SVG coordinate to screen coordinate
+    const normalizedX = (svgX - viewBoxX) / viewBoxWidth;
+    const screenX = normalizedX * svgWidth;
+    
+    return screenX;
   };
 
-  const renderTreeNode = (node: LifeTreeNode, depth = 0) => {
-    const indent = '  '.repeat(depth);
-    const importanceColor = {
-      low: 'text-gray-500',
-      medium: 'text-blue-600',
-      high: 'text-orange-600',
-      critical: 'text-red-600'
-    }[node.importance];
-
+  return (
+    <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
+      {labels.map(({ x, text, key }) => {
+        const screenX = convertSvgToScreenX(x);
     return (
-      <div key={node.id} className="mb-2">
-        <div className={`${indent} ${importanceColor} font-medium`}>
-          📍 {node.title} ({node.type})
-        </div>
-        <div className={`${indent} text-sm text-gray-600 ml-4`}>
-          {node.description}
-        </div>
-        {node.date && (
-          <div className={`${indent} text-xs text-gray-500 ml-4`}>
-            📅 {new Date(node.date).toLocaleDateString()}
+          <div
+            key={key}
+            className="absolute text-white text-sm"
+            style={{
+              left: `${screenX + 5}px`,
+              top: '8px',
+              color: 'white',
+              fontFamily: 'var(--font-lora), serif',
+            }}
+          >
+            {text}
           </div>
-        )}
-        {node.location && (
-          <div className={`${indent} text-xs text-gray-500 ml-4`}>
-            📍 {node.location}
-          </div>
-        )}
-        {node.tags && node.tags.length > 0 && (
-          <div className={`${indent} text-xs text-gray-500 ml-4`}>
-            🏷️ {node.tags.join(', ')}
-          </div>
-        )}
-        {node.children.map(child => renderTreeNode(child, depth + 1))}
+        );
+      })}
       </div>
     );
   };
 
-  if (loading) {
+const TimelineVisualization = () => {
+  const [mounted, setMounted] = useState(false);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: 1920, h: 1080 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+
+  const PADDING_LEFT = 500;
+  const RIGHT_EXTENT_YEARS = 200;
+
+  const timelineStartDate = useMemo(() => new Date(1970, 0, 1, 0, 0, 0), []);
+  
+  // The grid extends into the future
+  const gridEndDate = useMemo(() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() + RIGHT_EXTENT_YEARS);
+    return d;
+  }, []);
+
+  // The main timeline ends today
+  const mainTimelineEndDate = useMemo(() => new Date(), []);
+  
+  const pixelsPerDay = 200;
+  const totalGridDays = useMemo(
+    () => (gridEndDate.getTime() - timelineStartDate.getTime()) / (1000 * 60 * 60 * 24),
+    [timelineStartDate, gridEndDate]
+  );
+  const gridWidth = totalGridDays * pixelsPerDay;
+  const timelineHeight = 1080;
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const dateToX = useCallback((date: Date) => {
+    const dateMs = date.getTime();
+    const startMs = timelineStartDate.getTime();
+    const days = (dateMs - startMs) / (1000 * 60 * 60 * 24);
+    return days * pixelsPerDay + PADDING_LEFT;
+  }, [timelineStartDate, pixelsPerDay, PADDING_LEFT]);
+  
+  const mainTimelineEndX = dateToX(mainTimelineEndDate);
+
+  useEffect(() => {
+    if (mounted) {
+      const todayX = dateToX(new Date());
+      const daysToShow = 14;
+      const initialViewWidth = daysToShow * pixelsPerDay;
+
+      let startX = todayX - initialViewWidth / 2;
+      
+      setViewBox({
+        x: Math.max(0, startX),
+        y: 0,
+        w: initialViewWidth,
+        h: timelineHeight,
+      });
+    }
+  }, [mounted, pixelsPerDay, dateToX, timelineHeight]);
+
+  const getSvgPoint = useCallback((clientX: number, clientY: number) => {
+    const svg = svgRef.current;
+    if (!svg) return { x: 0, y: 0 };
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const ctm = svg.getScreenCTM();
+    if (ctm) {
+      return pt.matrixTransform(ctm.inverse());
+    }
+    return { x: 0, y: 0 };
+  }, []);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    setIsDragging(true);
+    setDragStart({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    if (!isDragging || !svgRef.current) return;
+    e.preventDefault();
+    const scale = viewBox.w / svgRef.current.clientWidth;
+    const dx = (e.clientX - dragStart.x) * scale;
+    const dy = (e.clientY - dragStart.y) * scale;
+    
+    let newX = viewBox.x - dx;
+    
+    // Add padding when approaching the birthday (left boundary)
+    const birthdayX = PADDING_LEFT; // The X coordinate of the birthday
+    const viewportWidth = viewBox.w;
+    const paddingZone = viewportWidth * 0.2; // 20% of viewport width as padding zone
+    
+    if (newX < birthdayX + paddingZone) {
+      // When we're close to the birthday, enforce minimum padding
+      const minPadding = viewportWidth * 0.1; // 10% of viewport as minimum padding
+      newX = Math.max(birthdayX - minPadding, newX);
+    }
+    
+    // Always enforce absolute minimum - never go past the timeline start
+    newX = Math.max(birthdayX - viewportWidth * 0.1, newX);
+    
+    setViewBox(prev => ({
+      x: newX,
+      y: prev.y - dy,
+      w: prev.w,
+      h: prev.h
+    }));
+    setDragStart({ x: e.clientX, y: e.clientY });
+  }, [isDragging, dragStart, viewBox, PADDING_LEFT]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+  
+  const handleWheel = useCallback((e: React.WheelEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    const zoomIntensity = 0.1;
+    const zoomFactor = e.deltaY < 0 ? 1 - zoomIntensity : 1 + zoomIntensity;
+    const { x: mouseX, y: mouseY } = getSvgPoint(e.clientX, e.clientY);
+    
+    const newW = viewBox.w * zoomFactor;
+    const newH = viewBox.h * zoomFactor;
+
+    // Calculate visible years for the new zoom level
+    const newVisibleDays = newW / pixelsPerDay;
+    const newVisibleYears = newVisibleDays / 365;
+    
+    // Prevent zooming out beyond decade level (around 80 years visible)
+    if (e.deltaY > 0 && newVisibleYears > 80) {
+      return; // Don't allow further zoom out
+    }
+
+    const newX = viewBox.x + (mouseX - viewBox.x) * (1 - newW / viewBox.w);
+
+    // Apply the same padding logic for zoom as we do for panning
+    const birthdayX = PADDING_LEFT;
+    const paddingZone = newW * 0.2;
+    let finalX = newX;
+    
+    if (finalX < birthdayX + paddingZone) {
+      const minPadding = newW * 0.1;
+      finalX = Math.max(birthdayX - minPadding, finalX);
+    }
+    
+    // Always enforce absolute minimum - never go past the timeline start
+    finalX = Math.max(birthdayX - newW * 0.1, finalX);
+
+    setViewBox({
+      x: finalX,
+      y: viewBox.y + (mouseY - viewBox.y) * (1 - newH / viewBox.h),
+      w: newW,
+      h: newH,
+    });
+  }, [getSvgPoint, viewBox, pixelsPerDay]);
+
+
+  if (!mounted) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading your life tree...</p>
-          </div>
-        </div>
+      <div className="w-screen h-screen overflow-hidden bg-black flex items-center justify-center">
+        <div className="text-white text-xl">Loading timeline...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">
-            🌳 Life Tree Journal
-          </h1>
-          <p className="text-xl text-gray-600 mb-6">
-            Voice-controlled life story management powered by Vapi
-          </p>
-          
-          {message && (
-            <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4">
-              {message}
-            </div>
-          )}
-
-          <div className="flex gap-4 justify-center">
-            <button
-              onClick={generateSampleData}
-              className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg transition-colors"
-            >
-              🌱 Generate Sample Data
-            </button>
-            <button
-              onClick={setupVapiAssistant}
-              className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg transition-colors"
-            >
-              🎤 Setup Vapi Assistant
-            </button>
-            <button
-              onClick={loadTreeData}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-colors"
-            >
-              🔄 Refresh Data
-            </button>
-          </div>
-        </div>
-
-        {/* Stats Dashboard */}
-        {stats && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-            <div className="bg-white p-6 rounded-lg shadow-md">
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">Total Entries</h3>
-              <p className="text-3xl font-bold text-blue-600">{stats.totalNodes}</p>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow-md">
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">High Importance</h3>
-              <p className="text-3xl font-bold text-orange-600">
-                {(stats.byImportance.high || 0) + (stats.byImportance.critical || 0)}
-              </p>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow-md">
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">People</h3>
-              <p className="text-3xl font-bold text-green-600">{stats.byType.person || 0}</p>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow-md">
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">Places</h3>
-              <p className="text-3xl font-bold text-purple-600">{stats.byType.place || 0}</p>
-            </div>
-          </div>
-        )}
-
-        {/* Tree Visualization */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Tree Structure */}
-          <div className="bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">🌳 Life Tree Structure</h2>
-            <div className="max-h-96 overflow-y-auto">
-              {tree ? (
-                <div className="font-mono text-sm">
-                  {renderTreeNode(tree)}
-                </div>
-              ) : (
-                <p className="text-gray-500">No tree data available</p>
-              )}
-            </div>
-          </div>
-
-          {/* Recent Activity */}
-          <div className="bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">📝 Recent Activity</h2>
-            <div className="max-h-96 overflow-y-auto">
-              {stats?.recentActivity && stats.recentActivity.length > 0 ? (
-                <div className="space-y-3">
-                  {stats.recentActivity.map((node) => (
-                    <div key={node.id} className="border-l-4 border-blue-500 pl-4">
-                      <div className="font-medium text-gray-800">{node.title}</div>
-                      <div className="text-sm text-gray-600">{node.type}</div>
-                      <div className="text-xs text-gray-500">
-                        {new Date(node.updatedAt).toLocaleDateString()}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-gray-500">No recent activity</p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* API Endpoints Info */}
-        <div className="mt-8 bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-2xl font-bold text-gray-800 mb-4">🔗 API Endpoints</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <div>
-              <h3 className="font-semibold text-gray-700 mb-2">Tree Management:</h3>
-              <ul className="space-y-1 text-gray-600">
-                <li>GET /api/tree - Get entire tree</li>
-                <li>POST /api/tree - Add new node</li>
-                <li>PUT /api/tree - Update node</li>
-                <li>DELETE /api/tree?nodeId=... - Delete node</li>
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-700 mb-2">Analytics & Search:</h3>
-              <ul className="space-y-1 text-gray-600">
-                <li>GET /api/tree?action=stats - Get statistics</li>
-                <li>GET /api/tree?action=analytics - Get analytics</li>
-                <li>GET /api/tree?action=timeline - Get timeline</li>
-                <li>GET /api/tree?action=search&... - Search nodes</li>
-              </ul>
-            </div>
-          </div>
-        </div> 
-
-        {/* Vapi Integration Info */}
-        <div className="mt-8 bg-gradient-to-r from-purple-50 to-blue-50 p-6 rounded-lg border border-purple-200">
-          <h2 className="text-2xl font-bold text-gray-800 mb-4">🎤 Vapi Voice Integration</h2>
-          <p className="text-gray-700 mb-4">
-            This application integrates with Vapi to provide voice-controlled life journaling. 
-            The voice agent can help you add experiences, people, places, and goals to your life tree 
-            through natural conversation.
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <div>
-              <h3 className="font-semibold text-gray-700 mb-2">Voice Commands:</h3>
-              <ul className="space-y-1 text-gray-600">
-                <li>&ldquo;Add a new experience about...&rdquo;</li>
-                <li>&ldquo;Tell me about someone important...&rdquo;</li>
-                <li>&ldquo;Document a place that matters...&rdquo;</li>
-                <li>&ldquo;What are my recent entries?&rdquo;</li>
-                <li>&ldquo;Show me my life statistics&rdquo;</li>
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-700 mb-2">Webhook Endpoint:</h3>
-              <ul className="space-y-1 text-gray-600">
-                <li>POST /api/webhook/vapi - Vapi webhook</li>
-                <li>POST /api/vapi/setup - Setup assistant</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
+    <div className="relative w-screen h-screen overflow-hidden bg-black cursor-grab active:cursor-grabbing">
+      <TimeLabels
+        viewBox={viewBox}
+        dateToX={dateToX}
+        timelineStartDate={timelineStartDate}
+        pixelsPerDay={pixelsPerDay}
+        paddingLeft={PADDING_LEFT}
+        svgRef={svgRef}
+      />
+      <svg
+        ref={svgRef}
+        width="100%"
+        height="100%"
+        viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onWheel={handleWheel}
+      >
+        <GridMarkers 
+          viewBox={viewBox}
+          dateToX={dateToX}
+          timelineStartDate={timelineStartDate}
+          pixelsPerDay={pixelsPerDay}
+          paddingLeft={PADDING_LEFT}
+          timelineHeight={timelineHeight}
+        />
+        <path
+          d={`M ${PADDING_LEFT} ${timelineHeight / 2} L ${mainTimelineEndX} ${timelineHeight / 2}`}
+          stroke="white"
+          strokeWidth="4"
+          vectorEffect="non-scaling-stroke"
+        />
+        {/* Current time marker */}
+        <line
+          x1={mainTimelineEndX}
+          y1={viewBox.y - viewBox.h}
+          x2={mainTimelineEndX}
+          y2={viewBox.y + viewBox.h * 2}
+          stroke="#FFB3B3"
+          strokeWidth="1.5"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      
     </div>
   );
+};
+
+export default function Home() {
+  return (
+    <main>
+      <TimelineVisualization />
+    </main>
+  );
 }
+
+export { GridMarkers as _GridMarkersHelper };
