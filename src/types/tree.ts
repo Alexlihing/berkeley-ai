@@ -1,53 +1,46 @@
-export interface TreeNode {
-  id: string;
-  title: string;
-  description: string;
-  timestamp: string;
-  type: 'commit' | 'branch' | 'merge';
-  branchName?: string;
-  parentIds: string[]; // For merge commits
-  children: TreeNode[];
-  metadata?: {
-    status?: 'active' | 'completed' | 'paused';
-    duration?: string;
-    [key: string]: any;
-  };
+export class Node {
+  uuid: string;
+  branchId: string; // every node sits on a branch
+  timeStamp: string; // ISO
+  content: string; // markdown
+  isUpdating: boolean;
+
+  constructor(
+    uuid: string,
+    branchId: string,
+    timeStamp: string,
+    content: string,
+    isUpdating: boolean = false
+  ) {
+    this.uuid = uuid;
+    this.branchId = branchId;
+    this.timeStamp = timeStamp;
+    this.content = content;
+    this.isUpdating = isUpdating;
+  }
 }
 
-export interface TreeStats {
-  totalNodes: number;
-  branches: string[];
-  activeBranches: number;
-  completedBranches: number;
-}
+export class Branch {
+  parentBranchId: string;
+  branchId: string;
+  branchStart: string; // timestamp
+  branchEnd: string; // timestamp
+  branchName: string;
+  branchSummary: string;
 
-export interface TreeSearchFilters {
-  type?: string[];
-  importance?: string[];
-  dateRange?: {
-    start: string;
-    end: string;
-  };
-  tags?: string[];
-  people?: string[];
-  emotions?: string[];
-}
-
-export interface TreeAnalytics {
-  timeline: {
-    year: string;
-    count: number;
-    types: Record<string, number>;
-  }[];
-  relationships: {
-    personId: string;
-    personName: string;
-    connectionCount: number;
-    sharedExperiences: string[];
-  }[];
-  growth: {
-    period: string;
-    newNodes: number;
-    growthRate: number;
-  }[];
+  constructor(
+    parentBranchId: string,
+    branchId: string,
+    branchStart: string,
+    branchEnd: string,
+    branchName: string,
+    branchSummary: string
+  ) {
+    this.parentBranchId = parentBranchId;
+    this.branchId = branchId;
+    this.branchStart = branchStart;
+    this.branchEnd = branchEnd;
+    this.branchName = branchName;
+    this.branchSummary = branchSummary;
+  }
 } 

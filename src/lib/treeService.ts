@@ -1,201 +1,173 @@
 import { v4 as uuidv4 } from 'uuid';
-import { TreeNode, TreeStats } from '@/types/tree';
+import { Node, Branch } from '@/types/tree';
 
 // In-memory storage (in production, use a database)
-const treeData: TreeNode = {
-  id: 'root',
-  title: 'Life Journey',
-  description: 'The beginning of my life story',
-  timestamp: new Date().toISOString(),
-  type: 'commit',
-  parentIds: [],
-  children: [],
-  metadata: { status: 'active' }
-};
+const nodes: Node[] = [];
+const branches: Branch[] = [];
+
+// Create root branch
+const rootBranch: Branch = new Branch(
+  '', // no parent
+  'root',
+  new Date().toISOString(),
+  '', // no end date for root
+  'Root Branch',
+  'The main branch of the tree'
+);
+
+// Initialize with root branch
+branches.push(rootBranch);
 
 export class TreeService {
-  // Add a new commit to the current branch
-  static addCommit(branchName: string, nodeData: Partial<TreeNode>): TreeNode {
-    const newNode: TreeNode = {
-      id: uuidv4(),
-      title: nodeData.title || 'Untitled',
-      description: nodeData.description || '',
-      timestamp: nodeData.timestamp || new Date().toISOString(),
-      type: 'commit',
-      branchName: branchName,
-      parentIds: [],
-      children: [],
-      metadata: nodeData.metadata || { status: 'active' }
-    };
-
-    // Find the latest commit in the branch and add as child
-    const latestCommit = this.getLatestCommitInBranch(branchName);
-    if (latestCommit) {
-      latestCommit.children.push(newNode);
-      newNode.parentIds = [latestCommit.id];
-    } else {
-      // If no commits in branch, add to root
-      treeData.children.push(newNode);
-      newNode.parentIds = [treeData.id];
-    }
-
-    return newNode;
-  }
-
-  // Create a new branch from an existing commit
-  static createBranch(branchName: string, fromCommitId: string, nodeData: Partial<TreeNode>): TreeNode {
-    const newNode: TreeNode = {
-      id: uuidv4(),
-      title: nodeData.title || `Started ${branchName}`,
-      description: nodeData.description || `Created new branch: ${branchName}`,
-      timestamp: nodeData.timestamp || new Date().toISOString(),
-      type: 'branch',
-      branchName: branchName,
-      parentIds: [fromCommitId],
-      children: [],
-      metadata: nodeData.metadata || { status: 'active' }
-    };
-
-    // Find the parent commit and add as child
-    const parentCommit = this.findNodeById(treeData, fromCommitId);
-    if (parentCommit) {
-      parentCommit.children.push(newNode);
-    } else {
-      // If parent not found, add to root
-      treeData.children.push(newNode);
-      newNode.parentIds = [treeData.id];
-    }
-
-    return newNode;
-  }
-
-  // Merge a branch back to main or another branch
-  static mergeBranch(branchName: string, targetBranch: string, nodeData: Partial<TreeNode>): TreeNode {
-    const newNode: TreeNode = {
-      id: uuidv4(),
-      title: nodeData.title || `Merged ${branchName} into ${targetBranch}`,
-      description: nodeData.description || `Merged branch ${branchName} into ${targetBranch}`,
-      timestamp: nodeData.timestamp || new Date().toISOString(),
-      type: 'merge',
-      branchName: targetBranch,
-      parentIds: [],
-      children: [],
-      metadata: nodeData.metadata || { status: 'completed' }
-    };
-
-    // Find the latest commits in both branches
-    const branchLatest = this.getLatestCommitInBranch(branchName);
-    const targetLatest = this.getLatestCommitInBranch(targetBranch);
-
-    if (branchLatest && targetLatest) {
-      newNode.parentIds = [branchLatest.id, targetLatest.id];
-      branchLatest.children.push(newNode);
-      targetLatest.children.push(newNode);
-    } else {
-      // If branches not found, add to root
-      treeData.children.push(newNode);
-      newNode.parentIds = [treeData.id];
-    }
-
-    return newNode;
-  }
-
-  // Get the latest commit in a specific branch
-  static getLatestCommitInBranch(branchName: string): TreeNode | null {
-    const allNodes: TreeNode[] = [];
-    this.getAllNodesRecursive(treeData, allNodes);
-    
-    const branchNodes = allNodes.filter(node => 
-      node.branchName === branchName && node.type === 'commit'
+  // Add a new node to a branch
+  static addNode(branchId: string, content: string): Node {
+    const newNode = new Node(
+      uuidv4(),
+      branchId,
+      new Date().toISOString(),
+      content,
+      false
     );
-    
-    if (branchNodes.length === 0) return null;
-    
-    return branchNodes.sort((a, b) => 
-      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    )[0];
+
+    nodes.push(newNode);
+    return newNode;
   }
 
-  // Find a node by ID
-  static findNodeById(node: TreeNode, id: string): TreeNode | null {
-    if (node.id === id) return node;
-    for (const child of node.children) {
-      const found = this.findNodeById(child, id);
-      if (found) return found;
+  // Find a node by UUID
+  static findNodeById(uuid: string): Node | null {
+    return nodes.find(node => node.uuid === uuid) || null;
+  }
+
+  // Update a node
+  static updateNode(uuid: string, updates: Partial<Node>): Node | null {
+    const node = this.findNodeById(uuid);
+    if (node) {
+      Object.assign(node, updates, { timeStamp: new Date().toISOString() });
+      return node;
     }
     return null;
   }
 
-  // Get the entire tree
-  static getTree(): TreeNode {
-    return treeData;
+  // Delete a node
+  static deleteNode(uuid: string): boolean {
+    const index = nodes.findIndex(node => node.uuid === uuid);
+    if (index !== -1) {
+      nodes.splice(index, 1);
+      return true;
+    }
+    return false;
   }
 
-  // Get tree statistics
-  static getStats(): TreeStats {
-    const stats: TreeStats = {
-      totalNodes: 0,
-      branches: [],
-      activeBranches: 0,
-      completedBranches: 0
-    };
-
-    this.calculateStatsRecursive(treeData, stats);
-    return stats;
+  // Get all nodes
+  static getAllNodes(): Node[] {
+    return nodes;
   }
 
-  private static calculateStatsRecursive(node: TreeNode, stats: TreeStats): void {
-    stats.totalNodes++;
-    
-    if (node.branchName && !stats.branches.includes(node.branchName)) {
-      stats.branches.push(node.branchName);
-    }
-
-    if (node.metadata?.status === 'active') {
-      stats.activeBranches++;
-    } else if (node.metadata?.status === 'completed') {
-      stats.completedBranches++;
-    }
-
-    // Recursively process children
-    for (const child of node.children) {
-      this.calculateStatsRecursive(child, stats);
-    }
+  // Get nodes by branch
+  static getNodesByBranch(branchId: string): Node[] {
+    return nodes.filter(node => node.branchId === branchId);
   }
 
-  private static getAllNodesRecursive(node: TreeNode, allNodes: TreeNode[]): void {
-    allNodes.push(node);
-    for (const child of node.children) {
-      this.getAllNodesRecursive(child, allNodes);
+  // Add a new branch
+  static addBranch(parentBranchId: string, branchName: string, branchSummary: string): Branch {
+    const newBranch = new Branch(
+      parentBranchId,
+      uuidv4(),
+      new Date().toISOString(),
+      '', // no end date initially
+      branchName,
+      branchSummary
+    );
+
+    branches.push(newBranch);
+    return newBranch;
+  }
+
+  // Find a branch by UUID
+  static findBranchById(branchId: string): Branch | null {
+    return branches.find(branch => branch.branchId === branchId) || null;
+  }
+
+  // Update a branch
+  static updateBranch(branchId: string, updates: Partial<Branch>): Branch | null {
+    const branch = this.findBranchById(branchId);
+    if (branch) {
+      Object.assign(branch, updates);
+      return branch;
     }
+    return null;
+  }
+
+  // Delete a branch and all its nodes
+  static deleteBranch(branchId: string): boolean {
+    const branchIndex = branches.findIndex(branch => branch.branchId === branchId);
+    if (branchIndex !== -1) {
+      // Delete all nodes in this branch
+      const nodesToDelete = nodes.filter(node => node.branchId === branchId);
+      nodesToDelete.forEach(node => {
+        const nodeIndex = nodes.findIndex(n => n.uuid === node.uuid);
+        if (nodeIndex !== -1) {
+          nodes.splice(nodeIndex, 1);
+        }
+      });
+
+      // Delete the branch
+      branches.splice(branchIndex, 1);
+      return true;
+    }
+    return false;
   }
 
   // Get all branches
-  static getBranches(): { [branchName: string]: TreeNode[] } {
-    const branches: { [branchName: string]: TreeNode[] } = {};
-    this.getBranchesRecursive(treeData, branches);
+  static getAllBranches(): Branch[] {
     return branches;
   }
 
-  private static getBranchesRecursive(node: TreeNode, branches: { [branchName: string]: TreeNode[] }): void {
-    if (node.branchName) {
-      if (!branches[node.branchName]) {
-        branches[node.branchName] = [];
-      }
-      branches[node.branchName].push(node);
-    }
-    for (const child of node.children) {
-      this.getBranchesRecursive(child, branches);
-    }
+  // Get child branches of a parent branch
+  static getChildBranches(parentBranchId: string): Branch[] {
+    return branches.filter(branch => branch.parentBranchId === parentBranchId);
   }
 
-  // Get timeline of all events
-  static getTimeline(): TreeNode[] {
-    const allNodes: TreeNode[] = [];
-    this.getAllNodesRecursive(treeData, allNodes);
-    
-    return allNodes
-      .filter(node => node.id !== 'root')
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  // Get branch hierarchy (tree structure)
+  static getBranchHierarchy(): Branch[] {
+    return branches;
+  }
+
+  // Search nodes by content
+  static searchNodesByContent(searchTerm: string): Node[] {
+    return nodes.filter(node => 
+      node.content.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }
+
+  // Get recent nodes
+  static getRecentNodes(limit: number = 10): Node[] {
+    return nodes
+      .sort((a, b) => new Date(b.timeStamp).getTime() - new Date(a.timeStamp).getTime())
+      .slice(0, limit);
+  }
+
+  // Get nodes by date range
+  static getNodesByDateRange(startDate: string, endDate: string): Node[] {
+    return nodes.filter(node => {
+      const nodeDate = new Date(node.timeStamp);
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      return nodeDate >= start && nodeDate <= end;
+    });
+  }
+
+  // Get tree statistics
+  static getStats() {
+    return {
+      totalNodes: nodes.length,
+      totalBranches: branches.length,
+      nodesByBranch: branches.map(branch => ({
+        branchId: branch.branchId,
+        branchName: branch.branchName,
+        nodeCount: this.getNodesByBranch(branch.branchId).length
+      })),
+      recentActivity: this.getRecentNodes(5)
+    };
   }
 } 
