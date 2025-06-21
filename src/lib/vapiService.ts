@@ -1,257 +1,263 @@
 import { TreeService } from './treeService';
-
-// import dotenv from 'dotenv';
-// dotenv.config();
-
-const VAPI_API_KEY = process.env.VAPI_API_KEY;
-if (!VAPI_API_KEY) {
-  throw new Error('VAPI_API_KEY is not set in the environment variables.');
-}
-
-export async function callVapiEndpoint(payload: any) {
-  const response = await fetch('https://api.vapi.com/endpoint', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${VAPI_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok) {
-    throw new Error(`VAPI API error: ${response.statusText}`);
-  }
-
-  return response.json();
-}
+import { Node, Branch } from '@/types/tree';
 
 export class VapiService {
-  // Handle function calls from Vapi
-  static handleFunctionCall(functionCall: any) {
-    switch (functionCall.name) {
-      case 'add_commit':
-        return this.handleAddCommit(functionCall.parameters);
+  private static vapi: VapiClient;
 
-      case 'create_branch':
-        return this.handleCreateBranch(functionCall.parameters);
+  static initialize() {
+    if (!process.env.VAPI_API_KEY) {
+      throw new Error('VAPI_API_KEY is required');
+    }
 
-      case 'merge_branch':
-        return this.handleMergeBranch(functionCall.parameters);
+    this.vapi = new VapiClient({
+      token: process.env.VAPI_API_KEY
+    });
+  }
 
-      case 'get_tree':
-        return this.handleGetTree();
+  // Create the life tree assistant
+  static async createLifeTreeAssistant() {
+    if (!this.vapi) {
+      this.initialize();
+    }
 
-      case 'get_branches':
-        return this.handleGetBranches();
+    try {
+      const assistant = await this.vapi.assistants.create({
+        name: "Life Tree Journal Assistant",
+        firstMessage: "Hello! I'm your personal life tree assistant. I can help you document your life experiences, memories, relationships, and achievements. What would you like to add to your life tree today?",
+        model: {
+          provider: "openai",
+          model: "gpt-4o",
+          temperature: 0.7,
+          messages: [{
+            role: "system",
+            content: `You are a compassionate and insightful life journaling assistant. Your role is to help users build a comprehensive tree of their life experiences, memories, and relationships.
 
-      case 'get_timeline':
-        return this.handleGetTimeline();
+            You can help users:
+            - Add new life experiences, memories, and milestones as nodes
+            - Create branches to organize their life story
+            - Document relationships with people
+            - Record achievements and goals
+            - Capture emotions and feelings
+            - Add places and events
+            - Organize their life story chronologically
+            - Find patterns and connections in their life
 
-      default:
-        throw new Error(`Unknown function: ${functionCall.name}`);
+            Always be empathetic, encouraging, and help users reflect deeply on their experiences. Ask follow-up questions to get richer details when appropriate.
+
+            When adding content, try to extract:
+            - Relevant dates
+            - Locations
+            - People involved
+            - Emotions felt
+            - Lessons learned
+            - Impact on their life
+
+            Be conversational and make the user feel comfortable sharing their personal experiences.`
+          }]
+        },
+        voice: {
+          provider: "11labs",
+          voiceId: "21m00Tcm4TlvDq8ikWAM"
+        },
+        tools: [
+          {
+            name: "add_node",
+            description: "Add a new node with content to a branch",
+            parameters: {
+              type: "object",
+              properties: {
+                branchId: {
+                  type: "string",
+                  description: "ID of the branch to add the node to"
+                },
+                content: {
+                  type: "string",
+                  description: "Markdown content for the node"
+                }
+              },
+              required: ["branchId", "content"]
+            }
+          },
+          {
+            name: "add_branch",
+            description: "Add a new branch to organize content",
+            parameters: {
+              type: "object",
+              properties: {
+                parentBranchId: {
+                  type: "string",
+                  description: "ID of the parent branch (use 'root' for top level)"
+                },
+                branchName: {
+                  type: "string",
+                  description: "Name of the new branch"
+                },
+                branchSummary: {
+                  type: "string",
+                  description: "Summary description of what this branch contains"
+                }
+              },
+              required: ["parentBranchId", "branchName", "branchSummary"]
+            }
+          },
+          {
+            name: "search_nodes",
+            description: "Search for nodes by content",
+            parameters: {
+              type: "object",
+              properties: {
+                searchTerm: {
+                  type: "string",
+                  description: "Search term to find in node content"
+                }
+              },
+              required: ["searchTerm"]
+            }
+          },
+          {
+            name: "get_stats",
+            description: "Get statistics about the life tree",
+            parameters: {
+              type: "object",
+              properties: {}
+            }
+          },
+          {
+            name: "get_recent_nodes",
+            description: "Get recent nodes from the life tree",
+            parameters: {
+              type: "object",
+              properties: {
+                limit: {
+                  type: "number",
+                  description: "Number of recent nodes to return (default: 5)"
+                }
+              }
+            }
+          },
+          {
+            name: "update_node",
+            description: "Update an existing node in the life tree",
+            parameters: {
+              type: "object",
+              properties: {
+                uuid: {
+                  type: "string",
+                  description: "UUID of the node to update"
+                },
+                content: {
+                  type: "string",
+                  description: "New content for the node"
+                }
+              },
+              required: ["uuid", "content"]
+            }
+          }
+        ]
+      });
+
+      console.log('Life Tree Assistant created:', assistant.id);
+      return assistant;
+    } catch (error) {
+      console.error('Error creating assistant:', error);
+      throw error;
     }
   }
 
-  private static handleAddCommit(parameters: any) {
-    const nodeData = {
-      title: parameters.title,
-      description: parameters.description,
-      timestamp: parameters.timestamp || new Date().toISOString(),
-      metadata: parameters.metadata || {}
-    };
+  // Handle function calls from the assistant
+  static handleFunctionCall(functionCall: any) {
+    const { name, arguments: args } = functionCall;
+    const parameters = JSON.parse(args);
 
-    const newNode = TreeService.addCommit(parameters.branchName, nodeData);
+    switch (name) {
+      case 'add_node':
+        return this.handleAddNode(parameters);
+      case 'add_branch':
+        return this.handleAddBranch(parameters);
+      case 'search_nodes':
+        return this.handleSearchNodes(parameters);
+      case 'get_stats':
+        return this.handleGetStats();
+      case 'get_recent_nodes':
+        return this.handleGetRecentNodes(parameters);
+      case 'update_node':
+        return this.handleUpdateNode(parameters);
+      default:
+        return {
+          success: false,
+          message: `Unknown function: ${name}`
+        };
+    }
+  }
+
+  private static handleAddNode(parameters: any) {
+    const { branchId, content } = parameters;
+    
+    const newNode = TreeService.addNode(branchId, content);
     return {
       success: true,
-      message: `Added commit to ${parameters.branchName}: ${parameters.title}`,
+      message: `Added new node to branch`,
       node: newNode
     };
   }
 
-  private static handleCreateBranch(parameters: any) {
-    const nodeData = {
-      title: parameters.title,
-      description: parameters.description,
-      timestamp: parameters.timestamp || new Date().toISOString(),
-      metadata: parameters.metadata || {}
-    };
-
-    const newNode = TreeService.createBranch(parameters.branchName, parameters.fromCommitId, nodeData);
+  private static handleAddBranch(parameters: any) {
+    const { parentBranchId, branchName, branchSummary } = parameters;
+    
+    const newBranch = TreeService.addBranch(parentBranchId, branchName, branchSummary);
     return {
       success: true,
-      message: `Created branch ${parameters.branchName} from commit ${parameters.fromCommitId}`,
-      node: newNode
+      message: `Created new branch: ${branchName}`,
+      branch: newBranch
     };
   }
 
-  private static handleMergeBranch(parameters: any) {
-    const nodeData = {
-      title: parameters.title,
-      description: parameters.description,
-      timestamp: parameters.timestamp || new Date().toISOString(),
-      metadata: parameters.metadata || {}
-    };
-
-    const newNode = TreeService.mergeBranch(parameters.branchName, parameters.targetBranch, nodeData);
+  private static handleSearchNodes(parameters: any) {
+    const { searchTerm } = parameters;
+    
+    const results = TreeService.searchNodesByContent(searchTerm);
     return {
       success: true,
-      message: `Merged ${parameters.branchName} into ${parameters.targetBranch}`,
-      node: newNode
+      message: `Found ${results.length} nodes matching "${searchTerm}"`,
+      results: results
     };
   }
 
-  private static handleGetTree() {
-    const tree = TreeService.getTree();
+  private static handleGetStats() {
+    const stats = TreeService.getStats();
     return {
       success: true,
-      message: 'Retrieved tree data',
-      tree: tree
+      message: `Your life tree has ${stats.totalNodes} total nodes across ${stats.totalBranches} branches`,
+      stats: stats
     };
   }
 
-  private static handleGetBranches() {
-    const branches = TreeService.getBranches();
+  private static handleGetRecentNodes(parameters: any) {
+    const limit = parameters.limit || 5;
+    
+    const recentNodes = TreeService.getRecentNodes(limit);
     return {
       success: true,
-      message: 'Retrieved branches',
-      branches: branches
+      message: `Here are your ${recentNodes.length} most recent entries`,
+      nodes: recentNodes
     };
   }
 
-  private static handleGetTimeline() {
-    const timeline = TreeService.getTimeline();
-    return {
-      success: true,
-      message: 'Retrieved timeline',
-      timeline: timeline
-    };
-  }
-
-  // Get Vapi tools configuration
-  static getVapiTools() {
-    return [
-      {
-        name: "add_commit",
-        description: "Add a new commit to a branch in the life tree",
-        parameters: {
-          type: "object",
-          properties: {
-            branchName: {
-              type: "string",
-              description: "Name of the branch to add commit to"
-            },
-            title: {
-              type: "string",
-              description: "Title of the commit"
-            },
-            description: {
-              type: "string",
-              description: "Description of what happened"
-            },
-            timestamp: {
-              type: "string",
-              description: "When this happened (ISO format)"
-            },
-            metadata: {
-              type: "object",
-              description: "Additional metadata"
-            }
-          },
-          required: ["branchName", "title", "description"]
-        }
-      },
-      {
-        name: "create_branch",
-        description: "Create a new branch from an existing commit",
-        parameters: {
-          type: "object",
-          properties: {
-            branchName: {
-              type: "string",
-              description: "Name of the new branch"
-            },
-            fromCommitId: {
-              type: "string",
-              description: "ID of the commit to branch from"
-            },
-            title: {
-              type: "string",
-              description: "Title for the branch creation"
-            },
-            description: {
-              type: "string",
-              description: "Description of why this branch was created"
-            },
-            timestamp: {
-              type: "string",
-              description: "When this branch was created (ISO format)"
-            },
-            metadata: {
-              type: "object",
-              description: "Additional metadata"
-            }
-          },
-          required: ["branchName", "fromCommitId", "title", "description"]
-        }
-      },
-      {
-        name: "merge_branch",
-        description: "Merge a branch back to main or another branch",
-        parameters: {
-          type: "object",
-          properties: {
-            branchName: {
-              type: "string",
-              description: "Name of the branch to merge"
-            },
-            targetBranch: {
-              type: "string",
-              description: "Name of the target branch to merge into"
-            },
-            title: {
-              type: "string",
-              description: "Title for the merge commit"
-            },
-            description: {
-              type: "string",
-              description: "Description of what was merged"
-            },
-            timestamp: {
-              type: "string",
-              description: "When this merge happened (ISO format)"
-            },
-            metadata: {
-              type: "object",
-              description: "Additional metadata"
-            }
-          },
-          required: ["branchName", "targetBranch", "title", "description"]
-        }
-      },
-      {
-        name: "get_tree",
-        description: "Get the entire life tree structure",
-        parameters: {
-          type: "object",
-          properties: {}
-        }
-      },
-      {
-        name: "get_branches",
-        description: "Get all branches in the life tree",
-        parameters: {
-          type: "object",
-          properties: {}
-        }
-      },
-      {
-        name: "get_timeline",
-        description: "Get a chronological timeline of all life events",
-        parameters: {
-          type: "object",
-          properties: {}
-        }
-      }
-    ];
+  private static handleUpdateNode(parameters: any) {
+    const { uuid, content } = parameters;
+    
+    const updatedNode = TreeService.updateNode(uuid, { content });
+    if (updatedNode) {
+      return {
+        success: true,
+        message: `Updated node successfully`,
+        node: updatedNode
+      };
+    } else {
+      return {
+        success: false,
+        message: `Node not found`
+      };
+    }
   }
 } 
