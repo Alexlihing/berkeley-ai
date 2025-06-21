@@ -1,319 +1,216 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useRef } from 'react';
-import Vapi from '@vapi-ai/web';
+import React, { useState } from 'react';
+import { nodes, branches } from './timelineData'; // Example data import
+import './Timeline.css'; // Assume you create a CSS file for styles
 
+// Helper: Assign unique colors to branches
+const branchColors = [
+  '#1976d2', // main
+  '#388e3c', // sub
+  '#fbc02d', // sub-sub
+  '#d32f2f', // etc
+];
 
-interface TreeNode {
-  id: string;
-  title: string;
-  description: string;
-  timestamp: string;
-  type: 'commit' | 'branch' | 'merge';
-  branchName?: string;
-  parentIds: string[];
-  children: TreeNode[];
-  metadata?: {
-    status?: 'active' | 'completed' | 'paused';
-    duration?: string;
-    [key: string]: any;
+// Types
+type Node = {
+  uuid: string;
+  branchId: string;
+  timeStamp: string;
+  content: string;
+  isUpdating: boolean;
+};
+
+type Branch = {
+  parentBranchId: string | null;
+  branchId: string;
+  branchStart: string;
+  branchEnd: string;
+  branchName: string;
+  branchSummary: string;
+};
+
+// Utility: get branch color by id
+const getBranchColor = (branchId: string) => {
+  const idx = branches.findIndex(b => b.branchId === branchId);
+  return branchColors[idx % branchColors.length];
+};
+
+// Utility: get branch hierarchy level
+const getBranchLevel = (branchId: string): number => {
+  let level = 0;
+  let currentBranchId = branchId;
+  
+  while (true) {
+    const branch = branches.find(b => b.branchId === currentBranchId);
+    if (!branch || !branch.parentBranchId) {
+      break;
+    }
+    level++;
+    currentBranchId = branch.parentBranchId;
+  }
+  
+  return level;
+};
+
+// Main timeline component
+const Timeline: React.FC = () => {
+  const [popupNode, setPopupNode] = useState<Node | null>(null);
+
+  // Calculate time range (linear scale)
+  const allTimestamps = [
+    ...branches.map(b => b.branchStart),
+    ...branches.map(b => b.branchEnd),
+    ...nodes.map(n => n.timeStamp),
+  ].map(ts => new Date(ts).getTime());
+  const minTime = Math.min(...allTimestamps);
+  const maxTime = Math.max(...allTimestamps);
+
+  // Helper: get X position for a timestamp
+  const getX = (ts: string) =>
+    ((new Date(ts).getTime() - minTime) / (maxTime - minTime)) * 2000 + 50; // 2000px width for scroll
+
+  // Render branches recursively
+  const renderBranch = (branch: Branch, parentY: number) => {
+    const level = getBranchLevel(branch.branchId);
+    const color = getBranchColor(branch.branchId);
+    const y = parentY - 80; // Each branch 80px above parent
+
+    // Branch start/end nodes
+    const startX = getX(branch.branchStart);
+    const endX = getX(branch.branchEnd);
+
+    // Nodes on this branch
+    const branchNodes = nodes.filter(n => n.branchId === branch.branchId);
+
+    // Sub-branches
+    const subBranches = branches.filter(b => b.parentBranchId === branch.branchId);
+
+    return (
+      <g key={branch.branchId}>
+        {/* Branch line */}
+        <line
+          x1={startX}
+          y1={parentY}
+          x2={startX}
+          y2={y}
+          stroke={color}
+          strokeWidth={3}
+        />
+        <line
+          x1={startX}
+          y1={y}
+          x2={endX}
+          y2={y}
+          stroke={color}
+          strokeWidth={3}
+        />
+        <line
+          x1={endX}
+          y1={y}
+          x2={endX}
+          y2={parentY}
+          stroke={color}
+          strokeWidth={3}
+        />
+
+        {/* Start node */}
+        <circle
+          cx={startX}
+          cy={parentY}
+          r={14}
+          fill="#fff"
+          stroke={color}
+          strokeWidth={4}
+          onClick={() =>
+            setPopupNode({
+              uuid: `start-${branch.branchId}`,
+              branchId: branch.branchId,
+              timeStamp: branch.branchStart,
+              content: `${branch.branchName} begins`,
+              isUpdating: false,
+            })
+          }
+          style={{ cursor: 'pointer' }}
+        />
+        {/* End node */}
+        <circle
+          cx={endX}
+          cy={parentY}
+          r={14}
+          fill="#fff"
+          stroke={color}
+          strokeWidth={4}
+          onClick={() =>
+            setPopupNode({
+              uuid: `end-${branch.branchId}`,
+              branchId: branch.branchId,
+              timeStamp: branch.branchEnd,
+              content: `${branch.branchName} ends`,
+              isUpdating: false,
+            })
+          }
+          style={{ cursor: 'pointer' }}
+        />
+        {/* Labels */}
+        <text x={startX} y={parentY - 20} fill={color} fontSize={14} textAnchor="middle">
+          {branch.branchName}
+        </text>
+        <text x={endX} y={parentY - 20} fill={color} fontSize={14} textAnchor="middle">
+          {/* Only label at end if not main */}
+          {branch.parentBranchId && `${branch.branchName} ends`}
+        </text>
+        {/* Nodes */}
+        {branchNodes.map(n => (
+          <circle
+            key={n.uuid}
+            cx={getX(n.timeStamp)}
+            cy={y}
+            r={10}
+            fill={color}
+            stroke="#fff"
+            strokeWidth={2}
+            onClick={() => setPopupNode(n)}
+            style={{ cursor: 'pointer' }}
+          />
+        ))}
+        {/* Sub-branches */}
+        {subBranches.map(sb => renderBranch(sb, y))}
+      </g>
+    );
   };
-}
 
-interface TreeStats {
-  totalNodes: number;
-  branches: string[];
-  activeBranches: number;
-  completedBranches: number;
-}
-
-export default function Home() {
-  const [tree, setTree] = useState<TreeNode | null>(null);
-  const [stats, setStats] = useState<TreeStats | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isCallActive, setIsCallActive] = useState(false);
-  const [transcript, setTranscript] = useState<string>('');
-  const [messages, setMessages] = useState<Array<{role: string, transcript: string}>>([]);
-  const [assistantId, setAssistantId] = useState<string>('');
-  const [showConfig, setShowConfig] = useState(false);
-  const vapiRef = useRef<Vapi | null>(null);
-
-  const fetchTree = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/tree');
-      const data = await response.json();
-      
-      if (data.success) {
-        setTree(data.tree);
-        setStats(data.stats);
-      } else {
-        setError(data.error || 'Failed to fetch tree');
-      }
-    } catch (err) {
-      setError('Failed to fetch tree data');
-      console.error('Error fetching tree:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const startVapiCall = async () => {
-    if (!process.env.NEXT_PUBLIC_VAPI_API_KEY) {
-      setError('VAPI API key not found. Please set NEXT_PUBLIC_VAPI_API_KEY in your environment variables.');
-      return;
-    }
-
-    if (!assistantId) {
-      setError('Please enter your Assistant ID first.');
-      setShowConfig(true);
-      return;
-    }
-
-    try {
-      setIsCallActive(true);
-      setTranscript('');
-      setMessages([]);
-
-      // Initialize Vapi with your public API key (following docs exactly)
-      vapiRef.current = new Vapi(process.env.VAPI_API_KEY);
-
-      // Listen for events (following docs exactly)
-      vapiRef.current.on('call-start', () => {
-        console.log('Call started');
-        setIsCallActive(true);
-      });
-
-      vapiRef.current.on('call-end', () => {
-        console.log('Call ended');
-        setIsCallActive(false);
-        fetchTree(); // Refresh tree data after call ends
-      });
-
-      vapiRef.current.on('message', (message) => {
-        if (message.type === 'transcript') {
-          console.log(`${message.role}: ${message.transcript}`);
-          setMessages(prev => [...prev, { role: message.role, transcript: message.transcript }]);
-          setTranscript(message.transcript);
-        }
-      });
-
-      // Start voice conversation (following docs exactly)
-      await vapiRef.current.start(assistantId);
-
-    } catch (err) {
-      console.error('Error starting Vapi call:', err);
-      setError('Failed to start voice call');
-      setIsCallActive(false);
-    }
-  };
-
-  const stopVapiCall = async () => {
-    if (vapiRef.current) {
-      await vapiRef.current.stop();
-      setIsCallActive(false);
-    }
-  };
-
-  const getVapiTools = async () => {
-    try {
-      const response = await fetch('/api/vapi/setup');
-      const data = await response.json();
-      if (data.success) {
-        console.log('Vapi tools configuration:', data.tools);
-        console.log('Assistant configuration:', data.assistant);
-        return data.tools;
-      }
-    } catch (err) {
-      console.error('Error fetching Vapi tools:', err);
-    }
-  };
-
-  useEffect(() => {
-    fetchTree();
-  }, []);
+  // Main branch is the root
+  const mainBranch = branches.find(b => !b.parentBranchId);
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">
-            Life Tree - Git Style
-          </h1>
-          <p className="text-lg text-gray-600 mb-6">
-            Your life as a branching timeline, controlled by voice
-          </p>
-          
-          {/* Configuration Section */}
-          <div className="mb-6">
-            <button
-              onClick={() => setShowConfig(!showConfig)}
-              className="text-blue-600 hover:text-blue-800 underline"
-            >
-              {showConfig ? 'Hide' : 'Show'} Setup Instructions
-            </button>
-            
-            {showConfig && (
-              <div className="mt-4 bg-white rounded-lg shadow p-6 text-left max-w-2xl mx-auto">
-                <h3 className="text-lg font-semibold mb-4">Setup Instructions</h3>
-                
-                <div className="space-y-4">
-                  <div>
-                    <h4 className="font-medium">1. Create Vapi Assistant</h4>
-                    <p className="text-sm text-gray-600">
-                      Go to <a href="https://dashboard.vapi.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600">Vapi Dashboard</a> and create a new assistant.
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <h4 className="font-medium">2. Configure Assistant</h4>
-                    <p className="text-sm text-gray-600">
-                      Use these settings for your assistant:
-                    </p>
-                    <ul className="text-sm text-gray-600 ml-4 mt-2">
-                      <li>• Name: "Life Tree Assistant"</li>
-                      <li>• First Message: "Hello! I'm your life tree assistant..."</li>
-                      <li>• Model: GPT-4o</li>
-                      <li>• Voice: 11labs (voice ID: 21m00Tcm4TlvDq8ikWAM)</li>
-                    </ul>
-                  </div>
-                  
-                  <div>
-                    <h4 className="font-medium">3. Add Tools</h4>
-                    <button
-                      onClick={getVapiTools}
-                      className="text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200"
-                    >
-                      Get Tools Configuration
-                    </button>
-                    <p className="text-sm text-gray-600 mt-1">
-                      Copy the tools from the console and add them to your assistant.
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <h4 className="font-medium">4. Set Webhook URL</h4>
-                    <p className="text-sm text-gray-600">
-                      Set webhook URL to: <code className="bg-gray-100 px-2 py-1 rounded">https://your-domain.com/api/webhook/vapi</code>
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <h4 className="font-medium">5. Enter Assistant ID</h4>
-                    <div className="flex gap-2 mt-2">
-                      <input
-                        type="text"
-                        placeholder="Enter your Assistant ID"
-                        value={assistantId}
-                        onChange={(e) => setAssistantId(e.target.value)}
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                      <button
-                        onClick={() => localStorage.setItem('vapi_assistant_id', assistantId)}
-                        className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
-                      >
-                        Save
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
+    <div style={{ width: '100vw', height: '80vh', overflowX: 'auto', position: 'relative', background: '#f9fafe' }}>
+      <svg width={2200} height={600} style={{ position: 'absolute', bottom: 0 }}>
+        {/* Main timeline line */}
+        <line
+          x1={getX(mainBranch!.branchStart)}
+          y1={500}
+          x2={getX(mainBranch!.branchEnd)}
+          y2={500}
+          stroke={getBranchColor(mainBranch!.branchId)}
+          strokeWidth={4}
+        />
+        {/* Main branch nodes and sub-branches */}
+        {renderBranch(mainBranch!, 500)}
+      </svg>
+      {/* Node popup */}
+      {popupNode && (
+        <div className="timeline-popup" onClick={() => setPopupNode(null)}>
+          <div className="timeline-popup-inner" onClick={e => e.stopPropagation()}>
+            <h3>{popupNode.content}</h3>
+            <div style={{ color: '#888', fontSize: 13 }}>{new Date(popupNode.timeStamp).toLocaleDateString()}</div>
+            {/* Markdown rendering can be added here */}
+            <button onClick={() => setPopupNode(null)} style={{ marginTop: 15 }}>Close</button>
           </div>
-          
-          <div className="flex justify-center mb-4">
-            {!isCallActive ? (
-              <button
-                onClick={startVapiCall}
-                disabled={loading}
-                className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
-              >
-                🎤 Start Voice Call
-              </button>
-            ) : (
-              <button
-                onClick={stopVapiCall}
-                className="bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
-              >
-                🛑 End Call
-              </button>
-            )}
-          </div>
-
-          {isCallActive && (
-            <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
-              🎤 Call Active - Speak to add to your life tree!
-            </div>
-          )}
-
-          {transcript && (
-            <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4">
-              <strong>Latest:</strong> {transcript}
-            </div>
-          )}
-
-          {messages.length > 0 && (
-            <div className="bg-gray-100 border border-gray-400 text-gray-700 px-4 py-3 rounded mb-4 max-h-40 overflow-y-auto">
-              <strong>Conversation:</strong>
-              {messages.map((msg, index) => (
-                <div key={index} className="text-sm mt-1">
-                  <span className="font-semibold">{msg.role}:</span> {msg.transcript}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
-
-        {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
-            {error}
-          </div>
-        )}
-
-        {stats && (
-          <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <h2 className="text-xl font-semibold mb-4">Tree Statistics</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-blue-600">{stats.totalNodes}</div>
-                <div className="text-sm text-gray-600">Total Nodes</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-green-600">{stats.branches.length}</div>
-                <div className="text-sm text-gray-600">Branches</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-yellow-600">{stats.activeBranches}</div>
-                <div className="text-sm text-gray-600">Active</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-gray-600">{stats.completedBranches}</div>
-                <div className="text-sm text-gray-600">Completed</div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {tree && (
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-xl font-semibold mb-4">Life Tree (JSON)</h2>
-            <div className="bg-gray-100 rounded p-4 overflow-auto max-h-96">
-              <pre className="text-sm text-gray-800 whitespace-pre-wrap">
-                {JSON.stringify(tree, null, 2)}
-              </pre>
-            </div>
-          </div>
-        )}
-
-        {loading && (
-          <div className="text-center py-8">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="mt-2 text-gray-600">Loading...</p>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
-}
+};
+
+export default Timeline;
