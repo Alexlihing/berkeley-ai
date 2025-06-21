@@ -1,284 +1,318 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { LifeTreeNode, TreeStats } from '@/types/tree';
+import { useState, useEffect, useRef } from 'react';
+import Vapi from '@vapi-ai/web';
+
+
+interface TreeNode {
+  id: string;
+  title: string;
+  description: string;
+  timestamp: string;
+  type: 'commit' | 'branch' | 'merge';
+  branchName?: string;
+  parentIds: string[];
+  children: TreeNode[];
+  metadata?: {
+    status?: 'active' | 'completed' | 'paused';
+    duration?: string;
+    [key: string]: any;
+  };
+}
+
+interface TreeStats {
+  totalNodes: number;
+  branches: string[];
+  activeBranches: number;
+  completedBranches: number;
+}
 
 export default function Home() {
-  const [tree, setTree] = useState<LifeTreeNode | null>(null);
+  const [tree, setTree] = useState<TreeNode | null>(null);
   const [stats, setStats] = useState<TreeStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isCallActive, setIsCallActive] = useState(false);
+  const [transcript, setTranscript] = useState<string>('');
+  const [messages, setMessages] = useState<Array<{role: string, transcript: string}>>([]);
+  const [assistantId, setAssistantId] = useState<string>('');
+  const [showConfig, setShowConfig] = useState(false);
+  const vapiRef = useRef<Vapi | null>(null);
+
+  const fetchTree = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/tree');
+      const data = await response.json();
+      
+      if (data.success) {
+        setTree(data.tree);
+        setStats(data.stats);
+      } else {
+        setError(data.error || 'Failed to fetch tree');
+      }
+    } catch (err) {
+      setError('Failed to fetch tree data');
+      console.error('Error fetching tree:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startVapiCall = async () => {
+    if (!process.env.NEXT_PUBLIC_VAPI_API_KEY) {
+      setError('VAPI API key not found. Please set NEXT_PUBLIC_VAPI_API_KEY in your environment variables.');
+      return;
+    }
+
+    if (!assistantId) {
+      setError('Please enter your Assistant ID first.');
+      setShowConfig(true);
+      return;
+    }
+
+    try {
+      setIsCallActive(true);
+      setTranscript('');
+      setMessages([]);
+
+      // Initialize Vapi with your public API key (following docs exactly)
+      vapiRef.current = new Vapi(process.env.VAPI_API_KEY);
+
+      // Listen for events (following docs exactly)
+      vapiRef.current.on('call-start', () => {
+        console.log('Call started');
+        setIsCallActive(true);
+      });
+
+      vapiRef.current.on('call-end', () => {
+        console.log('Call ended');
+        setIsCallActive(false);
+        fetchTree(); // Refresh tree data after call ends
+      });
+
+      vapiRef.current.on('message', (message) => {
+        if (message.type === 'transcript') {
+          console.log(`${message.role}: ${message.transcript}`);
+          setMessages(prev => [...prev, { role: message.role, transcript: message.transcript }]);
+          setTranscript(message.transcript);
+        }
+      });
+
+      // Start voice conversation (following docs exactly)
+      await vapiRef.current.start(assistantId);
+
+    } catch (err) {
+      console.error('Error starting Vapi call:', err);
+      setError('Failed to start voice call');
+      setIsCallActive(false);
+    }
+  };
+
+  const stopVapiCall = async () => {
+    if (vapiRef.current) {
+      await vapiRef.current.stop();
+      setIsCallActive(false);
+    }
+  };
+
+  const getVapiTools = async () => {
+    try {
+      const response = await fetch('/api/vapi/setup');
+      const data = await response.json();
+      if (data.success) {
+        console.log('Vapi tools configuration:', data.tools);
+        console.log('Assistant configuration:', data.assistant);
+        return data.tools;
+      }
+    } catch (err) {
+      console.error('Error fetching Vapi tools:', err);
+    }
+  };
 
   useEffect(() => {
-    loadTreeData();
+    fetchTree();
   }, []);
 
-  const loadTreeData = async () => {
-    try {
-      setLoading(true);
-      const [treeResponse, statsResponse] = await Promise.all([
-        fetch('/api/tree'),
-        fetch('/api/tree?action=stats')
-      ]);
-      
-      const treeData = await treeResponse.json();
-      const statsData = await statsResponse.json();
-      
-      setTree(treeData);
-      setStats(statsData);
-    } catch (error) {
-      console.error('Error loading tree data:', error);
-      setMessage('Error loading tree data');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const generateSampleData = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch('/api/tree/sample', { method: 'POST' });
-      const result = await response.json();
-      
-      if (result.success) {
-        setMessage(result.message);
-        await loadTreeData(); // Reload the data
-      } else {
-        setMessage('Failed to generate sample data');
-      }
-    } catch (error) {
-      console.error('Error generating sample data:', error);
-      setMessage('Error generating sample data');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const setupVapiAssistant = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch('/api/vapi/setup', { method: 'POST' });
-      const result = await response.json();
-      
-      if (result.success) {
-        setMessage(`Vapi Assistant created: ${result.assistant.name} (ID: ${result.assistant.id})`);
-      } else {
-        setMessage(`Failed to create Vapi Assistant: ${result.error}`);
-      }
-    } catch (error) {
-      console.error('Error setting up Vapi assistant:', error);
-      setMessage('Error setting up Vapi assistant');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const renderTreeNode = (node: LifeTreeNode, depth = 0) => {
-    const indent = '  '.repeat(depth);
-    const importanceColor = {
-      low: 'text-gray-500',
-      medium: 'text-blue-600',
-      high: 'text-orange-600',
-      critical: 'text-red-600'
-    }[node.importance];
-
-    return (
-      <div key={node.id} className="mb-2">
-        <div className={`${indent} ${importanceColor} font-medium`}>
-          📍 {node.title} ({node.type})
-        </div>
-        <div className={`${indent} text-sm text-gray-600 ml-4`}>
-          {node.description}
-        </div>
-        {node.date && (
-          <div className={`${indent} text-xs text-gray-500 ml-4`}>
-            📅 {new Date(node.date).toLocaleDateString()}
-          </div>
-        )}
-        {node.location && (
-          <div className={`${indent} text-xs text-gray-500 ml-4`}>
-            📍 {node.location}
-          </div>
-        )}
-        {node.tags && node.tags.length > 0 && (
-          <div className={`${indent} text-xs text-gray-500 ml-4`}>
-            🏷️ {node.tags.join(', ')}
-          </div>
-        )}
-        {node.children.map(child => renderTreeNode(child, depth + 1))}
-      </div>
-    );
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading your life tree...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
+    <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-6xl mx-auto">
-        {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-900 mb-4">
-            🌳 Life Tree Journal
+            Life Tree - Git Style
           </h1>
-          <p className="text-xl text-gray-600 mb-6">
-            Voice-controlled life story management powered by Vapi
+          <p className="text-lg text-gray-600 mb-6">
+            Your life as a branching timeline, controlled by voice
           </p>
           
-          {message && (
-            <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4">
-              {message}
+          {/* Configuration Section */}
+          <div className="mb-6">
+            <button
+              onClick={() => setShowConfig(!showConfig)}
+              className="text-blue-600 hover:text-blue-800 underline"
+            >
+              {showConfig ? 'Hide' : 'Show'} Setup Instructions
+            </button>
+            
+            {showConfig && (
+              <div className="mt-4 bg-white rounded-lg shadow p-6 text-left max-w-2xl mx-auto">
+                <h3 className="text-lg font-semibold mb-4">Setup Instructions</h3>
+                
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="font-medium">1. Create Vapi Assistant</h4>
+                    <p className="text-sm text-gray-600">
+                      Go to <a href="https://dashboard.vapi.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600">Vapi Dashboard</a> and create a new assistant.
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-medium">2. Configure Assistant</h4>
+                    <p className="text-sm text-gray-600">
+                      Use these settings for your assistant:
+                    </p>
+                    <ul className="text-sm text-gray-600 ml-4 mt-2">
+                      <li>• Name: "Life Tree Assistant"</li>
+                      <li>• First Message: "Hello! I'm your life tree assistant..."</li>
+                      <li>• Model: GPT-4o</li>
+                      <li>• Voice: 11labs (voice ID: 21m00Tcm4TlvDq8ikWAM)</li>
+                    </ul>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-medium">3. Add Tools</h4>
+                    <button
+                      onClick={getVapiTools}
+                      className="text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200"
+                    >
+                      Get Tools Configuration
+                    </button>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Copy the tools from the console and add them to your assistant.
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-medium">4. Set Webhook URL</h4>
+                    <p className="text-sm text-gray-600">
+                      Set webhook URL to: <code className="bg-gray-100 px-2 py-1 rounded">https://your-domain.com/api/webhook/vapi</code>
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-medium">5. Enter Assistant ID</h4>
+                    <div className="flex gap-2 mt-2">
+                      <input
+                        type="text"
+                        placeholder="Enter your Assistant ID"
+                        value={assistantId}
+                        onChange={(e) => setAssistantId(e.target.value)}
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button
+                        onClick={() => localStorage.setItem('vapi_assistant_id', assistantId)}
+                        className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          <div className="flex justify-center mb-4">
+            {!isCallActive ? (
+              <button
+                onClick={startVapiCall}
+                disabled={loading}
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
+              >
+                🎤 Start Voice Call
+              </button>
+            ) : (
+              <button
+                onClick={stopVapiCall}
+                className="bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
+              >
+                🛑 End Call
+              </button>
+            )}
+          </div>
+
+          {isCallActive && (
+            <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
+              🎤 Call Active - Speak to add to your life tree!
             </div>
           )}
 
-          <div className="flex gap-4 justify-center">
-            <button
-              onClick={generateSampleData}
-              className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg transition-colors"
-            >
-              🌱 Generate Sample Data
-            </button>
-            <button
-              onClick={setupVapiAssistant}
-              className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg transition-colors"
-            >
-              🎤 Setup Vapi Assistant
-            </button>
-            <button
-              onClick={loadTreeData}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-colors"
-            >
-              🔄 Refresh Data
-            </button>
-          </div>
+          {transcript && (
+            <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4">
+              <strong>Latest:</strong> {transcript}
+            </div>
+          )}
+
+          {messages.length > 0 && (
+            <div className="bg-gray-100 border border-gray-400 text-gray-700 px-4 py-3 rounded mb-4 max-h-40 overflow-y-auto">
+              <strong>Conversation:</strong>
+              {messages.map((msg, index) => (
+                <div key={index} className="text-sm mt-1">
+                  <span className="font-semibold">{msg.role}:</span> {msg.transcript}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Stats Dashboard */}
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
+            {error}
+          </div>
+        )}
+
         {stats && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-            <div className="bg-white p-6 rounded-lg shadow-md">
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">Total Entries</h3>
-              <p className="text-3xl font-bold text-blue-600">{stats.totalNodes}</p>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow-md">
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">High Importance</h3>
-              <p className="text-3xl font-bold text-orange-600">
-                {(stats.byImportance.high || 0) + (stats.byImportance.critical || 0)}
-              </p>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow-md">
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">People</h3>
-              <p className="text-3xl font-bold text-green-600">{stats.byType.person || 0}</p>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow-md">
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">Places</h3>
-              <p className="text-3xl font-bold text-purple-600">{stats.byType.place || 0}</p>
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 className="text-xl font-semibold mb-4">Tree Statistics</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-blue-600">{stats.totalNodes}</div>
+                <div className="text-sm text-gray-600">Total Nodes</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-green-600">{stats.branches.length}</div>
+                <div className="text-sm text-gray-600">Branches</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-yellow-600">{stats.activeBranches}</div>
+                <div className="text-sm text-gray-600">Active</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-gray-600">{stats.completedBranches}</div>
+                <div className="text-sm text-gray-600">Completed</div>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Tree Visualization */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Tree Structure */}
-          <div className="bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">🌳 Life Tree Structure</h2>
-            <div className="max-h-96 overflow-y-auto">
-              {tree ? (
-                <div className="font-mono text-sm">
-                  {renderTreeNode(tree)}
-                </div>
-              ) : (
-                <p className="text-gray-500">No tree data available</p>
-              )}
+        {tree && (
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-xl font-semibold mb-4">Life Tree (JSON)</h2>
+            <div className="bg-gray-100 rounded p-4 overflow-auto max-h-96">
+              <pre className="text-sm text-gray-800 whitespace-pre-wrap">
+                {JSON.stringify(tree, null, 2)}
+              </pre>
             </div>
           </div>
+        )}
 
-          {/* Recent Activity */}
-          <div className="bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">📝 Recent Activity</h2>
-            <div className="max-h-96 overflow-y-auto">
-              {stats?.recentActivity && stats.recentActivity.length > 0 ? (
-                <div className="space-y-3">
-                  {stats.recentActivity.map((node) => (
-                    <div key={node.id} className="border-l-4 border-blue-500 pl-4">
-                      <div className="font-medium text-gray-800">{node.title}</div>
-                      <div className="text-sm text-gray-600">{node.type}</div>
-                      <div className="text-xs text-gray-500">
-                        {new Date(node.updatedAt).toLocaleDateString()}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-gray-500">No recent activity</p>
-              )}
-            </div>
+        {loading && (
+          <div className="text-center py-8">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <p className="mt-2 text-gray-600">Loading...</p>
           </div>
-        </div>
-
-        {/* API Endpoints Info */}
-        <div className="mt-8 bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-2xl font-bold text-gray-800 mb-4">🔗 API Endpoints</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <div>
-              <h3 className="font-semibold text-gray-700 mb-2">Tree Management:</h3>
-              <ul className="space-y-1 text-gray-600">
-                <li>GET /api/tree - Get entire tree</li>
-                <li>POST /api/tree - Add new node</li>
-                <li>PUT /api/tree - Update node</li>
-                <li>DELETE /api/tree?nodeId=... - Delete node</li>
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-700 mb-2">Analytics & Search:</h3>
-              <ul className="space-y-1 text-gray-600">
-                <li>GET /api/tree?action=stats - Get statistics</li>
-                <li>GET /api/tree?action=analytics - Get analytics</li>
-                <li>GET /api/tree?action=timeline - Get timeline</li>
-                <li>GET /api/tree?action=search&... - Search nodes</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
-        {/* Vapi Integration Info */}
-        <div className="mt-8 bg-gradient-to-r from-purple-50 to-blue-50 p-6 rounded-lg border border-purple-200">
-          <h2 className="text-2xl font-bold text-gray-800 mb-4">🎤 Vapi Voice Integration</h2>
-          <p className="text-gray-700 mb-4">
-            This application integrates with Vapi to provide voice-controlled life journaling. 
-            The voice agent can help you add experiences, people, places, and goals to your life tree 
-            through natural conversation.
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <div>
-              <h3 className="font-semibold text-gray-700 mb-2">Voice Commands:</h3>
-              <ul className="space-y-1 text-gray-600">
-                <li>&ldquo;Add a new experience about...&rdquo;</li>
-                <li>&ldquo;Tell me about someone important...&rdquo;</li>
-                <li>&ldquo;Document a place that matters...&rdquo;</li>
-                <li>&ldquo;What are my recent entries?&rdquo;</li>
-                <li>&ldquo;Show me my life statistics&rdquo;</li>
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-700 mb-2">Webhook Endpoint:</h3>
-              <ul className="space-y-1 text-gray-600">
-                <li>POST /api/webhook/vapi - Vapi webhook</li>
-                <li>POST /api/vapi/setup - Setup assistant</li>
-              </ul>
-            </div>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

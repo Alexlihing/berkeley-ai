@@ -1,52 +1,123 @@
 import { v4 as uuidv4 } from 'uuid';
-import { LifeTreeNode, TreeStats, TreeSearchFilters, TreeAnalytics } from '@/types/tree';
+import { TreeNode, TreeStats } from '@/types/tree';
 
 // In-memory storage (in production, use a database)
-const lifeTree: LifeTreeNode = {
+const treeData: TreeNode = {
   id: 'root',
-  type: 'experience',
-  title: 'My Life Journey',
-  description: 'The story of my life',
-  importance: 'critical',
+  title: 'Life Journey',
+  description: 'The beginning of my life story',
+  timestamp: new Date().toISOString(),
+  type: 'commit',
+  parentIds: [],
   children: [],
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString()
+  metadata: { status: 'active' }
 };
 
 export class TreeService {
-  // Add a new node to the tree
-  static addNode(parentId: string, nodeData: Partial<LifeTreeNode>): LifeTreeNode {
-    const newNode: LifeTreeNode = {
+  // Add a new commit to the current branch
+  static addCommit(branchName: string, nodeData: Partial<TreeNode>): TreeNode {
+    const newNode: TreeNode = {
       id: uuidv4(),
-      type: nodeData.type || 'experience',
       title: nodeData.title || 'Untitled',
       description: nodeData.description || '',
-      date: nodeData.date,
-      location: nodeData.location,
-      people: nodeData.people || [],
-      emotions: nodeData.emotions || [],
-      tags: nodeData.tags || [],
-      importance: nodeData.importance || 'medium',
+      timestamp: nodeData.timestamp || new Date().toISOString(),
+      type: 'commit',
+      branchName: branchName,
+      parentIds: [],
       children: [],
-      metadata: nodeData.metadata || {},
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      metadata: nodeData.metadata || { status: 'active' }
     };
 
-    if (parentId === 'root') {
-      lifeTree.children.push(newNode);
+    // Find the latest commit in the branch and add as child
+    const latestCommit = this.getLatestCommitInBranch(branchName);
+    if (latestCommit) {
+      latestCommit.children.push(newNode);
+      newNode.parentIds = [latestCommit.id];
     } else {
-      const parent = this.findNodeById(lifeTree, parentId);
-      if (parent) {
-        parent.children.push(newNode);
-      }
+      // If no commits in branch, add to root
+      treeData.children.push(newNode);
+      newNode.parentIds = [treeData.id];
     }
 
     return newNode;
   }
 
+  // Create a new branch from an existing commit
+  static createBranch(branchName: string, fromCommitId: string, nodeData: Partial<TreeNode>): TreeNode {
+    const newNode: TreeNode = {
+      id: uuidv4(),
+      title: nodeData.title || `Started ${branchName}`,
+      description: nodeData.description || `Created new branch: ${branchName}`,
+      timestamp: nodeData.timestamp || new Date().toISOString(),
+      type: 'branch',
+      branchName: branchName,
+      parentIds: [fromCommitId],
+      children: [],
+      metadata: nodeData.metadata || { status: 'active' }
+    };
+
+    // Find the parent commit and add as child
+    const parentCommit = this.findNodeById(treeData, fromCommitId);
+    if (parentCommit) {
+      parentCommit.children.push(newNode);
+    } else {
+      // If parent not found, add to root
+      treeData.children.push(newNode);
+      newNode.parentIds = [treeData.id];
+    }
+
+    return newNode;
+  }
+
+  // Merge a branch back to main or another branch
+  static mergeBranch(branchName: string, targetBranch: string, nodeData: Partial<TreeNode>): TreeNode {
+    const newNode: TreeNode = {
+      id: uuidv4(),
+      title: nodeData.title || `Merged ${branchName} into ${targetBranch}`,
+      description: nodeData.description || `Merged branch ${branchName} into ${targetBranch}`,
+      timestamp: nodeData.timestamp || new Date().toISOString(),
+      type: 'merge',
+      branchName: targetBranch,
+      parentIds: [],
+      children: [],
+      metadata: nodeData.metadata || { status: 'completed' }
+    };
+
+    // Find the latest commits in both branches
+    const branchLatest = this.getLatestCommitInBranch(branchName);
+    const targetLatest = this.getLatestCommitInBranch(targetBranch);
+
+    if (branchLatest && targetLatest) {
+      newNode.parentIds = [branchLatest.id, targetLatest.id];
+      branchLatest.children.push(newNode);
+      targetLatest.children.push(newNode);
+    } else {
+      // If branches not found, add to root
+      treeData.children.push(newNode);
+      newNode.parentIds = [treeData.id];
+    }
+
+    return newNode;
+  }
+
+  // Get the latest commit in a specific branch
+  static getLatestCommitInBranch(branchName: string): TreeNode | null {
+    const allNodes: TreeNode[] = [];
+    this.getAllNodesRecursive(treeData, allNodes);
+    
+    const branchNodes = allNodes.filter(node => 
+      node.branchName === branchName && node.type === 'commit'
+    );
+    
+    if (branchNodes.length === 0) return null;
+    
+    return branchNodes.sort((a, b) => 
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    )[0];
+  }
+
   // Find a node by ID
-  static findNodeById(node: LifeTreeNode, id: string): LifeTreeNode | null {
+  static findNodeById(node: TreeNode, id: string): TreeNode | null {
     if (node.id === id) return node;
     for (const child of node.children) {
       const found = this.findNodeById(child, id);
@@ -55,128 +126,35 @@ export class TreeService {
     return null;
   }
 
-  // Update a node
-  static updateNode(nodeId: string, updates: Partial<LifeTreeNode>): LifeTreeNode | null {
-    const node = this.findNodeById(lifeTree, nodeId);
-    if (node) {
-      Object.assign(node, updates, { updatedAt: new Date().toISOString() });
-      return node;
-    }
-    return null;
-  }
-
-  // Delete a node
-  static deleteNode(nodeId: string): boolean {
-    return this.deleteNodeById(lifeTree, nodeId);
-  }
-
-  private static deleteNodeById(node: LifeTreeNode, id: string): boolean {
-    for (let i = 0; i < node.children.length; i++) {
-      if (node.children[i].id === id) {
-        node.children.splice(i, 1);
-        return true;
-      }
-      const deleted = this.deleteNodeById(node.children[i], id);
-      if (deleted) return deleted;
-    }
-    return false;
-  }
-
   // Get the entire tree
-  static getTree(): LifeTreeNode {
-    return lifeTree;
-  }
-
-  // Search nodes with filters
-  static searchNodes(filters: TreeSearchFilters): LifeTreeNode[] {
-    const results: LifeTreeNode[] = [];
-    this.searchNodesRecursive(lifeTree, filters, results);
-    return results;
-  }
-
-  private static searchNodesRecursive(node: LifeTreeNode, filters: TreeSearchFilters, results: LifeTreeNode[]): void {
-    // Apply filters
-    if (this.matchesFilters(node, filters)) {
-      results.push(node);
-    }
-
-    // Recursively search children
-    for (const child of node.children) {
-      this.searchNodesRecursive(child, filters, results);
-    }
-  }
-
-  private static matchesFilters(node: LifeTreeNode, filters: TreeSearchFilters): boolean {
-    if (filters.type && filters.type.length > 0 && !filters.type.includes(node.type)) {
-      return false;
-    }
-
-    if (filters.importance && filters.importance.length > 0 && !filters.importance.includes(node.importance)) {
-      return false;
-    }
-
-    if (filters.dateRange && node.date) {
-      const nodeDate = new Date(node.date);
-      const startDate = new Date(filters.dateRange.start);
-      const endDate = new Date(filters.dateRange.end);
-      if (nodeDate < startDate || nodeDate > endDate) {
-        return false;
-      }
-    }
-
-    if (filters.tags && filters.tags.length > 0) {
-      const hasMatchingTag = filters.tags.some(tag => node.tags?.includes(tag));
-      if (!hasMatchingTag) return false;
-    }
-
-    if (filters.people && filters.people.length > 0) {
-      const hasMatchingPerson = filters.people.some(person => node.people?.includes(person));
-      if (!hasMatchingPerson) return false;
-    }
-
-    if (filters.emotions && filters.emotions.length > 0) {
-      const hasMatchingEmotion = filters.emotions.some(emotion => node.emotions?.includes(emotion));
-      if (!hasMatchingEmotion) return false;
-    }
-
-    return true;
+  static getTree(): TreeNode {
+    return treeData;
   }
 
   // Get tree statistics
   static getStats(): TreeStats {
     const stats: TreeStats = {
       totalNodes: 0,
-      byType: {},
-      byImportance: {},
-      byYear: {},
-      recentActivity: []
+      branches: [],
+      activeBranches: 0,
+      completedBranches: 0
     };
 
-    this.calculateStatsRecursive(lifeTree, stats);
-    
-    // Get recent activity (last 10 nodes)
-    const allNodes: LifeTreeNode[] = [];
-    this.getAllNodesRecursive(lifeTree, allNodes);
-    stats.recentActivity = allNodes
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-      .slice(0, 10);
-
+    this.calculateStatsRecursive(treeData, stats);
     return stats;
   }
 
-  private static calculateStatsRecursive(node: LifeTreeNode, stats: TreeStats): void {
+  private static calculateStatsRecursive(node: TreeNode, stats: TreeStats): void {
     stats.totalNodes++;
     
-    // Count by type
-    stats.byType[node.type] = (stats.byType[node.type] || 0) + 1;
-    
-    // Count by importance
-    stats.byImportance[node.importance] = (stats.byImportance[node.importance] || 0) + 1;
-    
-    // Count by year
-    if (node.date) {
-      const year = new Date(node.date).getFullYear().toString();
-      stats.byYear[year] = (stats.byYear[year] || 0) + 1;
+    if (node.branchName && !stats.branches.includes(node.branchName)) {
+      stats.branches.push(node.branchName);
+    }
+
+    if (node.metadata?.status === 'active') {
+      stats.activeBranches++;
+    } else if (node.metadata?.status === 'completed') {
+      stats.completedBranches++;
     }
 
     // Recursively process children
@@ -185,98 +163,39 @@ export class TreeService {
     }
   }
 
-  private static getAllNodesRecursive(node: LifeTreeNode, allNodes: LifeTreeNode[]): void {
+  private static getAllNodesRecursive(node: TreeNode, allNodes: TreeNode[]): void {
     allNodes.push(node);
     for (const child of node.children) {
       this.getAllNodesRecursive(child, allNodes);
     }
   }
 
-  // Get analytics data
-  static getAnalytics(): TreeAnalytics {
-    const allNodes: LifeTreeNode[] = [];
-    this.getAllNodesRecursive(lifeTree, allNodes);
+  // Get all branches
+  static getBranches(): { [branchName: string]: TreeNode[] } {
+    const branches: { [branchName: string]: TreeNode[] } = {};
+    this.getBranchesRecursive(treeData, branches);
+    return branches;
+  }
 
-    // Timeline analytics
-    const timelineMap = new Map<string, { count: number; types: Record<string, number> }>();
-    allNodes.forEach(node => {
-      if (node.date) {
-        const year = new Date(node.date).getFullYear().toString();
-        const existing = timelineMap.get(year) || { count: 0, types: {} };
-        existing.count++;
-        existing.types[node.type] = (existing.types[node.type] || 0) + 1;
-        timelineMap.set(year, existing);
+  private static getBranchesRecursive(node: TreeNode, branches: { [branchName: string]: TreeNode[] }): void {
+    if (node.branchName) {
+      if (!branches[node.branchName]) {
+        branches[node.branchName] = [];
       }
-    });
-
-    const timeline = Array.from(timelineMap.entries()).map(([year, data]) => ({
-      year,
-      count: data.count,
-      types: data.types
-    })).sort((a, b) => parseInt(a.year) - parseInt(b.year));
-
-    // Relationship analytics
-    const peopleMap = new Map<string, { name: string; experiences: string[] }>();
-    allNodes.forEach(node => {
-      node.people?.forEach(personId => {
-        const existing = peopleMap.get(personId) || { name: personId, experiences: [] };
-        existing.experiences.push(node.id);
-        peopleMap.set(personId, existing);
-      });
-    });
-
-    const relationships = Array.from(peopleMap.entries()).map(([personId, data]) => ({
-      personId,
-      personName: data.name,
-      connectionCount: data.experiences.length,
-      sharedExperiences: data.experiences
-    })).sort((a, b) => b.connectionCount - a.connectionCount);
-
-    // Growth analytics (last 12 months)
-    const now = new Date();
-    const growth = [];
-    for (let i = 11; i >= 0; i--) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const monthStart = date.toISOString();
-      const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0).toISOString();
-      
-      const monthNodes = allNodes.filter(node => 
-        node.createdAt >= monthStart && node.createdAt <= monthEnd
-      );
-
-      growth.push({
-        period: date.toLocaleDateString('en-US', { year: 'numeric', month: 'short' }),
-        newNodes: monthNodes.length,
-        growthRate: i === 11 ? 0 : monthNodes.length // Simplified growth rate
-      });
-    }
-
-    return { timeline, relationships, growth };
-  }
-
-  // Get nodes by type
-  static getNodesByType(type: string): LifeTreeNode[] {
-    const results: LifeTreeNode[] = [];
-    this.getNodesByTypeRecursive(lifeTree, type, results);
-    return results;
-  }
-
-  private static getNodesByTypeRecursive(node: LifeTreeNode, type: string, results: LifeTreeNode[]): void {
-    if (node.type === type) {
-      results.push(node);
+      branches[node.branchName].push(node);
     }
     for (const child of node.children) {
-      this.getNodesByTypeRecursive(child, type, results);
+      this.getBranchesRecursive(child, branches);
     }
   }
 
-  // Get timeline of events
-  static getTimeline(): LifeTreeNode[] {
-    const allNodes: LifeTreeNode[] = [];
-    this.getAllNodesRecursive(lifeTree, allNodes);
+  // Get timeline of all events
+  static getTimeline(): TreeNode[] {
+    const allNodes: TreeNode[] = [];
+    this.getAllNodesRecursive(treeData, allNodes);
     
     return allNodes
-      .filter(node => node.date)
-      .sort((a, b) => new Date(a.date!).getTime() - new Date(b.date!).getTime());
+      .filter(node => node.id !== 'root')
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   }
 } 

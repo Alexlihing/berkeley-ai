@@ -2,44 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { TreeService } from '@/lib/treeService';
 
 // GET /api/tree - Get the entire tree
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
-    const { searchParams } = new URL(request.url);
-    const action = searchParams.get('action');
-
-    switch (action) {
-      case 'stats':
-        const stats = TreeService.getStats();
-        return NextResponse.json(stats);
-
-      case 'analytics':
-        const analytics = TreeService.getAnalytics();
-        return NextResponse.json(analytics);
-
-      case 'timeline':
-        const timeline = TreeService.getTimeline();
-        return NextResponse.json(timeline);
-
-      case 'search':
-        const filters = {
-          type: searchParams.getAll('type'),
-          importance: searchParams.getAll('importance'),
-          tags: searchParams.getAll('tags'),
-          people: searchParams.getAll('people'),
-          emotions: searchParams.getAll('emotions'),
-          dateRange: searchParams.get('dateRange') ? JSON.parse(searchParams.get('dateRange')!) : undefined
-        };
-        const searchResults = TreeService.searchNodes(filters);
-        return NextResponse.json(searchResults);
-
-      default:
-        const tree = TreeService.getTree();
-        return NextResponse.json(tree);
-    }
+    const tree = TreeService.getTree();
+    const stats = TreeService.getStats();
+    
+    return NextResponse.json({
+      success: true,
+      tree,
+      stats
+    });
   } catch (error) {
-    console.error('GET /api/tree error:', error);
+    console.error('Error fetching tree:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { success: false, error: 'Failed to fetch tree' },
       { status: 500 }
     );
   }
@@ -49,69 +25,52 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { parentId, ...nodeData } = body;
+    const { action, ...params } = body;
 
-    const newNode = TreeService.addNode(parentId || 'root', nodeData);
-    return NextResponse.json(newNode, { status: 201 });
-  } catch (error) {
-    console.error('POST /api/tree error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
+    let result;
+    switch (action) {
+      case 'add_commit':
+        result = TreeService.addCommit(params.branchName, {
+          title: params.title,
+          description: params.description,
+          timestamp: params.timestamp,
+          metadata: params.metadata
+        });
+        break;
 
-// PUT /api/tree - Update a node
-export async function PUT(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { nodeId, ...updates } = body;
+      case 'create_branch':
+        result = TreeService.createBranch(params.branchName, params.fromCommitId, {
+          title: params.title,
+          description: params.description,
+          timestamp: params.timestamp,
+          metadata: params.metadata
+        });
+        break;
 
-    const updatedNode = TreeService.updateNode(nodeId, updates);
-    if (updatedNode) {
-      return NextResponse.json(updatedNode);
-    } else {
-      return NextResponse.json(
-        { error: 'Node not found' },
-        { status: 404 }
-      );
-    }
-  } catch (error) {
-    console.error('PUT /api/tree error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
+      case 'merge_branch':
+        result = TreeService.mergeBranch(params.branchName, params.targetBranch, {
+          title: params.title,
+          description: params.description,
+          timestamp: params.timestamp,
+          metadata: params.metadata
+        });
+        break;
 
-// DELETE /api/tree - Delete a node
-export async function DELETE(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const nodeId = searchParams.get('nodeId');
-
-    if (!nodeId) {
-      return NextResponse.json(
-        { error: 'nodeId is required' },
-        { status: 400 }
-      );
+      default:
+        return NextResponse.json(
+          { success: false, error: 'Invalid action' },
+          { status: 400 }
+        );
     }
 
-    const deleted = TreeService.deleteNode(nodeId);
-    if (deleted) {
-      return NextResponse.json({ message: 'Node deleted successfully' });
-    } else {
-      return NextResponse.json(
-        { error: 'Node not found' },
-        { status: 404 }
-      );
-    }
+    return NextResponse.json({
+      success: true,
+      result
+    });
   } catch (error) {
-    console.error('DELETE /api/tree error:', error);
+    console.error('Error processing tree action:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { success: false, error: 'Failed to process action' },
       { status: 500 }
     );
   }

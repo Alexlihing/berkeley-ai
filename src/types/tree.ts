@@ -1,34 +1,24 @@
-export interface LifeTreeNode {
+export interface TreeNode {
   id: string;
-  type: 'experience' | 'person' | 'place' | 'achievement' | 'milestone' | 'memory' | 'goal' | 'relationship' | 'skill' | 'event';
   title: string;
   description: string;
-  date?: string; // ISO date string
-  location?: string;
-  people?: string[]; // IDs of related people
-  emotions?: string[];
-  tags?: string[];
-  importance: 'low' | 'medium' | 'high' | 'critical';
-  children: LifeTreeNode[];
+  timestamp: string;
+  type: 'commit' | 'branch' | 'merge';
+  branchName?: string;
+  parentIds: string[]; // For merge commits
+  children: TreeNode[];
   metadata?: {
-    age?: number;
+    status?: 'active' | 'completed' | 'paused';
     duration?: string;
-    impact?: string;
-    lessons?: string[];
-    photos?: string[];
-    documents?: string[];
-    [key: string]: string | number | string[] | undefined;
+    [key: string]: any;
   };
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface TreeStats {
   totalNodes: number;
-  byType: Record<string, number>;
-  byImportance: Record<string, number>;
-  byYear: Record<string, number>;
-  recentActivity: LifeTreeNode[];
+  branches: string[];
+  activeBranches: number;
+  completedBranches: number;
 }
 
 export interface TreeSearchFilters {

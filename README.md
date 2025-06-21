@@ -1,213 +1,188 @@
-# 🌳 Life Tree Journal
+# Life Tree - Git Style Voice Journal
 
-A voice-controlled life story management application built with Next.js and Vapi. This advanced journaling app allows you to build a comprehensive tree of your life experiences, memories, relationships, and achievements through natural voice conversation.
+A NextJS application that creates a git-like tree structure of your life experiences, controlled entirely through voice commands using Vapi's voice AI.
 
-## 🚀 Features
+## Features
 
-### Voice-Controlled Life Journaling
-- **Natural Voice Interaction**: Use your voice to add experiences, people, places, and goals to your life tree
-- **Intelligent Assistant**: Powered by Vapi's AI assistant that understands context and asks follow-up questions
-- **Emotional Intelligence**: Captures emotions, lessons learned, and personal insights
+- **Git-like Life Tree**: Your life as a branching timeline with commits, branches, and merges
+- **Voice Control**: Add life events, create new life paths, and merge experiences through natural speech
+- **Real-time Updates**: See your life tree update as you speak
+- **Simple UI**: Clean interface showing tree statistics and JSON structure
 
-### Life Tree Structure
-- **Hierarchical Organization**: Organize your life story in a tree structure with parent-child relationships
-- **Multiple Node Types**: 
-  - Experiences & Memories
-  - People & Relationships
-  - Places & Locations
-  - Achievements & Milestones
-  - Goals & Aspirations
-  - Skills & Learning
-  - Events & Occasions
+## Tree Structure
 
-### Rich Metadata
-- **Emotional Tracking**: Tag experiences with emotions felt
-- **Geographic Context**: Add locations and places
-- **Temporal Organization**: Date-based timeline of your life
-- **Relationship Mapping**: Connect people to experiences
-- **Custom Tags**: Categorize and organize your entries
-- **Importance Levels**: Mark critical, high, medium, or low importance
+The app models your life like a git repository:
 
-### Analytics & Insights
-- **Life Statistics**: Overview of your life tree composition
-- **Timeline Analysis**: Chronological view of your life events
-- **Relationship Analytics**: See connections between people and experiences
-- **Growth Tracking**: Monitor how your life story evolves over time
+- **Commits**: Individual life events (started a job, completed a project, etc.)
+- **Branches**: Different life paths (career, personal, hobbies, relationships, etc.)
+- **Merges**: When different life paths come together or influence each other
 
-## 🛠️ Technology Stack
+Each node contains:
+- `title`: Event name
+- `description`: What happened
+- `timestamp`: When it occurred
+- `type`: 'commit', 'branch', or 'merge'
+- `branchName`: Which life path it belongs to
+- `metadata`: Additional details like status, duration, etc.
 
-- **Frontend**: Next.js 15, React 19, TypeScript, Tailwind CSS
-- **Voice AI**: Vapi (Voice AI Platform)
-- **Backend**: Next.js API Routes
-- **Data Storage**: In-memory (easily extensible to database)
+## Voice Commands
 
-## 📦 Installation
+You can speak natural language commands like:
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd berkeley-ai
-   ```
+- "I started a new job at Google as a software engineer"
+- "I began learning guitar as a new hobby"
+- "I completed my degree and it's now part of my main career path"
+- "I started a side project about AI"
+- "I finished the AI project and merged it back to my main career"
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+## Setup Instructions
 
-3. **Set up environment variables**
-   ```bash
-   cp env.example .env.local
-   ```
-   
-   Edit `.env.local` and add your Vapi credentials:
-   ```env
-   VAPI_API_KEY=your_vapi_api_key_here
-   VAPI_PUBLIC_KEY=your_vapi_public_key_here
-   VAPI_ASSISTANT_ID=your_assistant_id_here
-   ```
+### 1. Clone and Install
 
-4. **Run the development server**
-   ```bash
-   npm run dev
-   ```
+```bash
+git clone <repository-url>
+cd berkeley-ai
+npm install
+```
 
-5. **Open your browser**
-   Navigate to [http://localhost:3000](http://localhost:3000)
+### 2. Environment Configuration
 
-## 🎤 Setting Up Vapi Integration
+Copy the environment example and configure your Vapi API key:
 
-1. **Get Vapi API Keys**
-   - Sign up at [vapi.ai](https://vapi.ai)
-   - Create a new project
-   - Get your API keys from the dashboard
+```bash
+cp env.example .env.local
+```
 
-2. **Configure Webhook**
-   - Set your webhook URL to: `https://your-domain.com/api/webhook/vapi`
-   - For local development, use ngrok or similar service
+Edit `.env.local` and add your Vapi API key:
 
-3. **Create Assistant**
-   - Click "Setup Vapi Assistant" in the app
-   - Or use the API endpoint: `POST /api/vapi/setup`
+```env
+NEXT_PUBLIC_VAPI_API_KEY=your_vapi_api_key_here
+```
 
-## 🔧 API Endpoints
+### 3. Get Vapi API Key
 
-### Tree Management
-- `GET /api/tree` - Get entire life tree
-- `POST /api/tree` - Add new node
-- `PUT /api/tree` - Update existing node
-- `DELETE /api/tree?nodeId=...` - Delete node
+1. Sign up at [vapi.ai](https://vapi.ai)
+2. Create a new project
+3. Get your API key from the dashboard
+4. Add it to your `.env.local` file
 
-### Analytics & Search
-- `GET /api/tree?action=stats` - Get tree statistics
-- `GET /api/tree?action=analytics` - Get detailed analytics
-- `GET /api/tree?action=timeline` - Get chronological timeline
-- `GET /api/tree?action=search&...` - Search nodes with filters
+### 4. Run the Application
+
+```bash
+npm run dev
+```
+
+Visit `http://localhost:3000` to see the app.
+
+## API Endpoints
+
+### Tree Operations
+- `GET /api/tree` - Get the entire tree and statistics
+- `POST /api/tree` - Add commits, create branches, or merge branches
 
 ### Vapi Integration
-- `POST /api/webhook/vapi` - Vapi webhook handler
-- `POST /api/vapi/setup` - Create Vapi assistant
-- `POST /api/tree/sample` - Generate sample data
+- `GET /api/vapi/setup` - Get Vapi tools configuration
+- `POST /api/webhook/vapi` - Handle Vapi function calls
 
-## 🗣️ Voice Commands
+## Voice Integration Setup
 
-The Vapi assistant understands natural language commands like:
+### Current Demo Version
+The current version simulates voice calls by adding sample data. To enable real voice integration:
 
-- **"Add a new experience about graduating from college"**
-- **"Tell me about my best friend Sarah"**
-- **"Document the time I hiked in Yosemite"**
-- **"What are my recent life entries?"**
-- **"Show me my life statistics"**
-- **"Add a goal to learn machine learning"**
-- **"What places are important in my life?"**
+### Full Voice Integration
+1. **Set up Vapi Assistant**:
+   - Create an assistant in Vapi dashboard
+   - Configure the tools from `/api/vapi/setup`
+   - Set the webhook URL to your domain + `/api/webhook/vapi`
 
-## 📊 Data Structure
+2. **Configure Webhook**:
+   - Deploy your app to a public domain
+   - Update the webhook URL in Vapi dashboard
+   - Ensure the webhook endpoint can handle function calls
 
-### LifeTreeNode
-```typescript
-interface LifeTreeNode {
-  id: string;
-  type: 'experience' | 'person' | 'place' | 'achievement' | 'milestone' | 'memory' | 'goal' | 'relationship' | 'skill' | 'event';
-  title: string;
-  description: string;
-  date?: string;
-  location?: string;
-  people?: string[];
-  emotions?: string[];
-  tags?: string[];
-  importance: 'low' | 'medium' | 'high' | 'critical';
-  children: LifeTreeNode[];
-  metadata?: Record<string, any>;
-  createdAt: string;
-  updatedAt: string;
+3. **Update Frontend**:
+   - Replace the simulated voice call with real Vapi SDK integration
+   - Use the Vapi web components for voice interaction
+
+## Available Tools
+
+The voice assistant can use these tools:
+
+### `add_commit`
+Add a new life event to a branch
+```json
+{
+  "branchName": "career",
+  "title": "Started new job",
+  "description": "Began working at Google",
+  "timestamp": "2024-01-15T10:00:00Z"
 }
 ```
 
-## 🎯 Use Cases
+### `create_branch`
+Start a new life path
+```json
+{
+  "branchName": "hobbies",
+  "fromCommitId": "commit-id",
+  "title": "Started learning guitar",
+  "description": "Began a new hobby"
+}
+```
 
-### Personal Life Journaling
-- Document important life events and milestones
-- Track personal growth and development
-- Remember lessons learned from experiences
-- Maintain a timeline of your life story
+### `merge_branch`
+Combine life paths
+```json
+{
+  "branchName": "side-project",
+  "targetBranch": "career",
+  "title": "Completed AI project",
+  "description": "Merged side project into career"
+}
+```
 
-### Relationship Mapping
-- Document important people in your life
-- Track how relationships evolve over time
-- Remember shared experiences and memories
-- Understand your social network
+### `get_tree`, `get_branches`, `get_timeline`
+Retrieve tree information for context
 
-### Goal Tracking
-- Set and track personal and professional goals
-- Document progress and achievements
-- Learn from setbacks and challenges
-- Celebrate successes and milestones
+## Development
 
-### Memory Preservation
-- Capture precious memories before they fade
-- Document family history and stories
-- Preserve cultural and personal heritage
-- Create a legacy for future generations
+### Project Structure
+```
+src/
+├── app/
+│   ├── api/
+│   │   ├── tree/route.ts          # Tree CRUD operations
+│   │   ├── vapi/setup/route.ts    # Vapi tools configuration
+│   │   └── webhook/vapi/route.ts  # Vapi webhook handler
+│   └── page.tsx                   # Main UI
+├── lib/
+│   ├── treeService.ts             # Tree business logic
+│   └── vapiService.ts             # Vapi integration
+└── types/
+    └── tree.ts                    # TypeScript definitions
+```
 
-## 🔮 Future Enhancements
+### Adding New Features
+1. **New Tree Operations**: Add methods to `TreeService`
+2. **New Voice Tools**: Add tool definitions to `VapiService.getVapiTools()`
+3. **UI Updates**: Modify `page.tsx` for new features
 
-- **Database Integration**: PostgreSQL/MongoDB for persistent storage
-- **Media Support**: Photos, videos, and audio attachments
-- **Export Features**: PDF, JSON, or other formats
-- **Privacy Controls**: User authentication and data protection
-- **Mobile App**: React Native or Flutter mobile application
-- **AI Insights**: Machine learning analysis of life patterns
-- **Collaboration**: Share life stories with family and friends
-- **Timeline Visualization**: Interactive timeline charts
-- **Memory Triggers**: AI-powered memory prompts and reminders
+## Technologies Used
 
-## 🤝 Contributing
+- **Next.js 14** - React framework
+- **TypeScript** - Type safety
+- **Tailwind CSS** - Styling
+- **Vapi AI** - Voice integration
+- **UUID** - Unique ID generation
+
+## Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Test the voice integration
+5. Submit a pull request
 
-## 📄 License
+## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- [Vapi](https://vapi.ai) for providing the voice AI platform
-- [Next.js](https://nextjs.org) for the React framework
-- [Tailwind CSS](https://tailwindcss.com) for styling
-- The open-source community for inspiration and tools
-
-## 📞 Support
-
-If you have any questions or need help setting up the application, please:
-
-1. Check the [Vapi documentation](https://docs.vapi.ai)
-2. Review the API endpoints in this README
-3. Open an issue in the repository
-4. Contact the development team
-
----
-
-**Built with ❤️ for preserving life stories through voice technology**
+MIT License - see LICENSE file for details
