@@ -1,17 +1,250 @@
+.timeline-container {
+  font-family: 'Styrene B', serif;
+  cursor: grab;
+}
+
+.timeline-container:active {
+  cursor: grabbing;
+}
+
+/* Time grid styling */
+.time-grid line {
+  transition: opacity 0.2s ease;
+}
+
+.time-grid line:hover {
+  opacity: 0.8;
+}
+
+.time-grid text {
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Today marker styling */
+.today-marker {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.7;
+  }
+}
+
+/* Ongoing relationship arrows */
+.ongoing-arrow {
+  transition: all 0.2s ease;
+}
+
+.ongoing-arrow:hover {
+  filter: brightness(1.2);
+  transform: scale(1.1);
+}
+
+/* Branch line styling */
+.timeline-container line {
+  transition: stroke-width 0.2s ease, opacity 0.2s ease;
+}
+
+.timeline-container line:hover {
+  stroke-width: 6px;
+  opacity: 0.8;
+}
+
+/* Branch endpoint styling (start/end points of branches) */
+.branch-endpoint {
+  transition: all 0.2s ease;
+}
+
+.branch-endpoint circle {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+  transition: filter 0.2s ease;
+}
+
+.branch-endpoint:hover circle {
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3)) brightness(1.1);
+}
+
+/* Timeline node styling (events/milestones) */
+.timeline-node circle {
+  r: 8;
+  transition: r 0.2s ease, filter 0.2s ease;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
+}
+
+.timeline-node:hover circle {
+  r: 10;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.25)) brightness(1.05);
+}
+
+/* Node tooltip styling */
+.node-tooltip {
+  user-select: none;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.timeline-node:hover .node-tooltip,
+.branch-endpoint:hover .node-tooltip {
+  opacity: 1;
+}
+
 .timeline-popup {
   position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,0.25);
+  top: 0; 
+  left: 0; 
+  right: 0; 
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 100;
+  backdrop-filter: blur(4px);
 }
+
 .timeline-popup-inner {
-  background: #fff;
-  border-radius: 18px;
-  padding: 32px 40px;
-  box-shadow: 0 4px 32px rgba(0,0,0,0.18);
-  min-width: 320px;
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 0;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  min-width: 380px;
   max-width: 90vw;
+  max-height: 80vh;
+  overflow: hidden;
+  animation: popupSlideIn 0.3s ease-out;
+}
+
+@keyframes popupSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.popup-header {
+  padding: 24px 32px 20px;
+  border-bottom: 3px solid;
+  background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+}
+
+.popup-header h3 {
+  margin: 0 0 12px 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: #1a1a1a;
+  line-height: 1.3;
+}
+
+.popup-time-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.popup-date {
+  font-size: 16px;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.popup-relative {
+  font-size: 14px;
+  color: #718096;
+  font-style: italic;
+}
+
+.popup-branch-info {
+  padding: 24px 32px;
+  background: #ffffff;
+}
+
+.branch-name {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.branch-summary {
+  font-size: 15px;
+  color: #4a5568;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.branch-duration {
+  font-size: 14px;
+  color: #718096;
+  background: #f7fafc;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-left: 4px solid #e2e8f0;
+  font-weight: 500;
+}
+
+.popup-close-btn {
+  width: 100%;
+  padding: 16px 32px;
+  border: none;
+  color: white;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.popup-close-btn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.popup-close-btn:active {
+  transform: translateY(0);
+}
+
+/* Timeline container enhancements */
+.timeline-container svg {
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.1));
+}
+
+/* Smooth scrolling */
+.timeline-container {
+  scroll-behavior: smooth;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .timeline-popup-inner {
+    min-width: 320px;
+    margin: 20px;
+  }
+  
+  .popup-header,
+  .popup-branch-info {
+    padding: 20px 24px;
+  }
+  
+  .popup-header h3 {
+    font-size: 18px;
+  }
+  
+  .branch-name {
+    font-size: 16px;
+  }
 }

@@ -12,9 +12,10 @@ export type Branch = {
   parentBranchId: string | null;
   branchId: string;
   branchStart: string; // ISO
-  branchEnd: string;   // ISO
+  branchEnd: string | null;   // ISO or null for ongoing relationships
   branchName: string;
   branchSummary: string;
+  color: string; // Hex color for the branch
 };
 
 // Branch UUIDs
@@ -22,6 +23,9 @@ export const MAIN_BRANCH = 'main-branch-uuid';
 export const MIT_BRANCH = 'mit-branch-uuid';
 export const FRAT_BRANCH = 'frat-branch-uuid';
 export const PHD_BRANCH = 'phd-branch-uuid';
+export const RELATIONSHIP_BRANCH = 'relationship-branch-uuid';
+export const RELATIONSHIP_BRANCH2 = 'relationship-branch-uuid2';
+
 
 // Branches
 export const branches: Branch[] = [
@@ -29,9 +33,10 @@ export const branches: Branch[] = [
     parentBranchId: null,
     branchId: MAIN_BRANCH,
     branchStart: '2000-01-01',
-    branchEnd: '2025-01-01',
+    branchEnd: null,
     branchName: 'Life',
     branchSummary: 'The main timeline of your life.',
+    color: '#2C3E50', // Dark blue-gray
   },
   {
     parentBranchId: MAIN_BRANCH,
@@ -40,6 +45,7 @@ export const branches: Branch[] = [
     branchEnd: '2006-06-01',
     branchName: 'MIT Undergrad',
     branchSummary: 'Studied physics at MIT.',
+    color: '#3498DB', // Blue
   },
   {
     parentBranchId: MIT_BRANCH,
@@ -48,6 +54,7 @@ export const branches: Branch[] = [
     branchEnd: '2004-06-01',
     branchName: 'Fraternity',
     branchSummary: 'Joined a fraternity during MIT.',
+    color: '#E74C3C', // Red
   },
   {
     parentBranchId: MAIN_BRANCH,
@@ -56,65 +63,45 @@ export const branches: Branch[] = [
     branchEnd: '2018-06-01',
     branchName: 'Caltech PhD',
     branchSummary: 'Physics PhD at Caltech.',
+    color: '#27AE60', // Green
   },
+  {
+    parentBranchId: MAIN_BRANCH,
+    branchId: RELATIONSHIP_BRANCH,
+    branchStart: '2004-03-15',
+    branchEnd: null, // Ongoing relationship
+    branchName: 'Long-term Relationship',
+    branchSummary: 'A committed relationship that has lasted over 20 years.',
+    color: '#9B59B6', // Purple
+  }
 ];
 
 // Nodes
+// These represent events/milestones that occur within branches.
+// They are fundamentally different from branch start/end points.
+// Start and end nodes are NOT included here - they are handled by the branch lines.
 export const nodes: Node[] = [
-  // MIT Branch nodes (start/end handled by branch line)
-  {
-    uuid: 'mit-start-node',
-    branchId: MIT_BRANCH,
-    timeStamp: '2002-09-01',
-    content: 'MIT Undergrad begins',
-    isUpdating: false,
-  },
-  {
-    uuid: 'mit-end-node',
-    branchId: MIT_BRANCH,
-    timeStamp: '2006-06-01',
-    content: 'MIT Undergrad ends',
-    isUpdating: false,
-  },
-
-  // Frat Branch nodes
-  {
-    uuid: 'frat-start-node',
-    branchId: FRAT_BRANCH,
-    timeStamp: '2003-09-01',
-    content: 'Joined fraternity',
-    isUpdating: false,
-  },
-  {
-    uuid: 'frat-end-node',
-    branchId: FRAT_BRANCH,
-    timeStamp: '2004-06-01',
-    content: 'Left fraternity',
-    isUpdating: false,
-  },
 
   // Main branch: Research award node
   {
     uuid: 'research-award-node',
-    branchId: MAIN_BRANCH,
+    branchId: MIT_BRANCH,
     timeStamp: '2005-05-15',
     content: 'Received research award',
     isUpdating: false,
   },
-
-  // PhD Branch nodes
   {
-    uuid: 'phd-start-node',
-    branchId: PHD_BRANCH,
-    timeStamp: '2010-09-01',
-    content: 'Caltech PhD begins',
+    uuid: 'relationship-milestone-1',
+    branchId: RELATIONSHIP_BRANCH,
+    timeStamp: '2008-06-20',
+    content: 'We had our first date and it was really nice. We drank boba and went to the library. What a fun day we had!',
     isUpdating: false,
   },
   {
-    uuid: 'phd-end-node',
-    branchId: PHD_BRANCH,
-    timeStamp: '2018-06-01',
-    content: 'Caltech PhD ends',
+    uuid: 'relationship-milestone-2',
+    branchId: RELATIONSHIP_BRANCH,
+    timeStamp: '2015-09-10',
+    content: 'Another significant moment',
     isUpdating: false,
   },
 ];
