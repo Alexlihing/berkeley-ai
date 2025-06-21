@@ -249,7 +249,7 @@ export default function Home() {
               </ul>
             </div>
           </div>
-        </div>
+        </div> 
 
         {/* Vapi Integration Info */}
         <div className="mt-8 bg-gradient-to-r from-purple-50 to-blue-50 p-6 rounded-lg border border-purple-200">
