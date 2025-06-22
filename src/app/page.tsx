@@ -82,6 +82,14 @@ export default function Home() {
   // SSE connection ref
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  // New state for spacebar hold
+  const [isHoldingSpace, setIsHoldingSpace] = useState(false);
+  const spaceHoldTimeout = useRef<NodeJS.Timeout | null>(null);
+
+  // Pulse animation trigger when call toggles
+  const [pulseType, setPulseType] = useState<'start' | 'stop' | null>(null);
+  const prevCallActive = useRef<boolean>(isCallActive);
+
   // Initialize SSE connection
   const initializeSSE = () => {
     console.log('SSE: initializeSSE called, current ref:', eventSourceRef.current);
@@ -367,12 +375,131 @@ export default function Home() {
     return nodes.filter(node => node.branchId === branchId);
   };
 
+  // New toggleCall function
+  const toggleCall = () => {
+    if (loading) return;
+    if (isCallActive) {
+      stopVapiCall();
+    } else {
+      startVapiCall();
+    }
+  };
+
+  // Utility to convert ISO to epoch seconds (duplicate from Timeline)
+  const isoToEpochSeconds = (iso: string) => new Date(iso).getTime() / 1000;
+
+  // Smooth auto-fit using Timeline's focusViewportToLoc global
+  const handleAutoFitSmooth = () => {
+    const w = window as any;
+    if (!w.focusViewportToLoc) return;
+
+    // Compute min / max timestamps across data
+    let minTime = Date.now() / 1000;
+    let maxTime = 0;
+
+    nodes.forEach(n => {
+      const t = isoToEpochSeconds(n.timeStamp);
+      if (t < minTime) minTime = t;
+      if (t > maxTime) maxTime = t;
+    });
+
+    branches.forEach(b => {
+      const start = isoToEpochSeconds(b.branchStart);
+      const end = b.branchEnd && b.branchEnd !== '' ? isoToEpochSeconds(b.branchEnd) : Date.now() / 1000;
+      if (start < minTime) minTime = start;
+      if (end > maxTime) maxTime = end;
+    });
+
+    // Default to birthday→now if no data
+    if (nodes.length === 0 && branches.length === 0) {
+      minTime = 0;
+      maxTime = Date.now() / 1000;
+    }
+
+    const range = maxTime - minTime;
+    const padding = range * 0.2;
+    const paddedMin = Math.max(0, minTime - padding);
+    const paddedMax = maxTime + padding;
+
+    const centerTime = (paddedMin + paddedMax) / 2;
+    const granularity = (paddedMax - paddedMin) / window.innerWidth;
+
+    w.focusViewportToLoc(centerTime, window.innerHeight / 2, granularity);
+  };
+
+  // New useEffect for spacebar hold
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || e.repeat) return;
+
+      // Ignore if focused element is an input/textarea/select or contentEditable
+      const target = e.target as HTMLElement;
+      const tagName = target?.tagName;
+      if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || target?.isContentEditable) {
+        return;
+      }
+
+      e.preventDefault();
+
+      // Start hold animation
+      setIsHoldingSpace(true);
+
+      // Ensure no previous timer
+      if (spaceHoldTimeout.current) clearTimeout(spaceHoldTimeout.current);
+
+      spaceHoldTimeout.current = setTimeout(() => {
+        toggleCall();
+        setIsHoldingSpace(false);
+        spaceHoldTimeout.current = null;
+      }, 500);
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+
+      // Cancel pending toggle if released early
+      if (spaceHoldTimeout.current) {
+        clearTimeout(spaceHoldTimeout.current);
+        spaceHoldTimeout.current = null;
+      }
+      setIsHoldingSpace(false);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [isCallActive, loading]);
+
+  // Watch isCallActive and trigger pulse effect
+  useEffect(() => {
+    if (prevCallActive.current === isCallActive) return;
+
+    if (isCallActive) {
+      setPulseType('start');
+      // Clear after animation completes (~600ms)
+      const timer = setTimeout(() => setPulseType(null), 600);
+      return () => clearTimeout(timer);
+    } else {
+      setPulseType('stop');
+      const timer = setTimeout(() => setPulseType(null), 400);
+      return () => clearTimeout(timer);
+    }
+  }, [isCallActive]);
+
+  useEffect(() => {
+    prevCallActive.current = isCallActive;
+  }, [isCallActive]);
+
   return (
     <div className="w-screen h-screen overflow-hidden relative">
       <Timeline nodes={nodes} branches={branches} loading={loadingNodes || loadingBranches} />
       
       {/* View Mode Toggle */}
-      <div className="absolute top-4 left-4 z-50">
+      <div className="absolute top-4 left-4 z-50 hidden">
         <div className="bg-white rounded-lg shadow-lg p-2 flex gap-2">
           <button
             onClick={() => setViewMode('tree')}
@@ -415,20 +542,6 @@ export default function Home() {
             Refresh
           </button>
           <button
-            onClick={() => {
-              const w = window as any;
-              if (w.autoFitToData) {
-                w.autoFitToData();
-              }
-            }}
-            className="px-3 py-1 rounded text-sm font-medium transition-colors bg-blue-100 text-blue-700 hover:bg-blue-200 flex items-center gap-1"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-            </svg>
-            Auto-Fit
-          </button>
-          <button
             onClick={async () => {
               try {
                 const response = await fetch('/api/tree/test-update', { method: 'POST' });
@@ -466,7 +579,7 @@ export default function Home() {
       </div>
 
       {/* Data Display Panel */}
-      <div className="absolute bottom-4 left-4 z-50 max-w-md">
+      <div className="absolute bottom-4 left-4 z-50 max-w-md hidden">
         <div className="bg-white rounded-lg shadow-lg p-4 max-h-96 overflow-y-auto">
           <h3 className="text-lg font-semibold mb-3 text-gray-800">
             {viewMode === 'tree' && 'Tree Overview'}
@@ -631,15 +744,67 @@ export default function Home() {
       {/* Floating Voice Call Button */}
       <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-50">
         <button
-          onClick={isCallActive ? stopVapiCall : startVapiCall}
+          onClick={toggleCall}
           disabled={loading}
-          className={`font-semibold py-3 px-8 rounded-lg text-lg transition-colors shadow-lg border ${
-            isCallActive 
-              ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white border-red-500' 
-              : 'bg-white hover:bg-gray-100 disabled:bg-gray-300 text-black border-gray-200'
+          className={`relative overflow-visible w-16 h-16 rounded-full border-2 flex items-center justify-center transition-all ${
+            isHoldingSpace ? 'duration-300' : 'duration-200'
+          } ${
+            isCallActive
+              ? isHoldingSpace
+                ? 'bg-red-700 text-white border-red-500'
+                : 'bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white border-red-500'
+              : isHoldingSpace
+                ? 'bg-white bg-opacity-60 text-black border-white'
+                : 'bg-transparent hover:bg-white hover:bg-opacity-20 disabled:opacity-50 text-white hover:text-black border-white'
           }`}
         >
-          {isCallActive ? '🛑 Stop Call' : '🎤 Start Voice Call'}
+          {/* Pulsating overlay */}
+          {pulseType && (
+            <span
+              className={`absolute inset-0 rounded-full pointer-events-none z-0 ${
+                pulseType === 'start'
+                  ? 'bg-white/40 animate-[ping_0.6s_linear]'
+                  : 'bg-red-500/50 animate-[ping_0.4s_linear]'
+              }`}
+            />
+          )}
+          {/* Icon container with higher z-index */}
+          <span className="relative z-10 flex items-center">
+            {isCallActive ? (
+              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            ) : (
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+              </svg>
+            )}
+          </span>
+        </button>
+      </div>
+
+      {/* Floating Auto-Fit & Home Buttons */}
+      <div className="absolute bottom-8 right-4 z-50 flex gap-2">
+        {/* Auto-Fit */}
+        <button
+          onClick={handleAutoFitSmooth}
+          className="w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all duration-200 bg-transparent text-white hover:bg-white hover:bg-opacity-20 hover:text-black border-white"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+          </svg>
+        </button>
+        {/* Home (Today) */}
+        <button
+          onClick={() => {
+            const w = window as any;
+            if (w.focusTodayView) w.focusTodayView();
+          }}
+          className="w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all duration-200 bg-transparent text-white hover:bg-white hover:bg-opacity-20 hover:text-black border-white"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l9-9 9 9M4 10v10a1 1 0 001 1h6m4 0h6a1 1 0 001-1V10" />
+          </svg>
         </button>
       </div>
     </div>

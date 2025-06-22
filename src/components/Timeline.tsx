@@ -1062,6 +1062,12 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
     const coarseAlpha = 1 - fadeProgress;
     const fineAlpha = fineStep !== null ? fadeProgress : 0;
 
+    // Decide if tick labels occupy one or two lines (coarse step < 1 day implies two-line)
+    const tickTwoLines = (coarseStep < SECONDS_IN_DAY) || (fineStep !== null && fineStep < SECONDS_IN_DAY && fineAlpha > 0.05);
+    const targetLabelYPos = tickTwoLines ? 45 : 25; // higher when single-line ticks
+    // Ease current label position towards target
+    todayLabelY.current += (targetLabelYPos - todayLabelY.current) * 0.2;
+
     // Helper to draw a tick step with specified alpha
     const drawStep = (step: number, alpha: number) => {
       if (alpha <= 0) return;
@@ -1453,21 +1459,28 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
       ctx.lineTo(todayX, size.height);
       ctx.stroke();
       
-      // Add current datetime label next to the top bar
-      const currentDateTime = formatCurrentDateTime(currentTime);
+      // Draw simplified current date/time label (two lines)
+      const nowDate = new Date(currentTime * 1000);
+      const dateStr = nowDate.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric'
+      });
+      const timeStr = nowDate.toLocaleTimeString(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+
       ctx.font = '12px Lora, serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
-      ctx.fillStyle = '#FF0000'; // Same red color as the line
-      
-      // Position the label to the right of the line, below the tick labels
+      ctx.fillStyle = '#FF0000'; // Red color
+
+      // Position label a little lower to avoid overlap with tick labels
       const labelX = todayX + 10;
-      const labelY = 35; // Moved down from 10 to 35 to avoid overlap with tick labels
-      
-      // Only draw if the label would be visible
-      if (labelX < size.width - 150) { // Leave some margin for the label
-        ctx.fillText(currentDateTime, labelX, labelY);
-      }
+      const labelY = todayLabelY.current;
+      ctx.fillText(dateStr, labelX, labelY);
+      ctx.fillText(timeStr, labelX, labelY + 16);
     }
 
     // (at the end of the draw function, after all timeline drawing)
@@ -1993,6 +2006,9 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
   // Use sample data if props are empty
   const displayBranches = branches && branches.length > 0 ? branches : sampleBranches;
   const displayNodes = nodes && nodes.length > 0 ? nodes : sampleNodes;
+
+  // Add todayLabelY ref for animated label position
+  const todayLabelY = useRef<number>(25);
 
   return (
     <div ref={containerRef} className="w-full h-full bg-black cursor-grab select-none font-lora relative">
