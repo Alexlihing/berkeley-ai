@@ -25,6 +25,8 @@ const MIN_VELOCITY = 0.1; // Lower threshold for longer gliding
 const BRANCH_SPACING = 60; // pixels between branches
 const BRANCH_HEIGHT = 4; // height of branch line
 const NODE_RADIUS = 6; // radius of node circles
+const MIN_MARKER_SPACING = 60; // px at which markers are fully visible
+const FADE_RANGE = 30;         // px range over which they fade out
 const TOOLTIP_OFFSET = 10; // pixels offset for tooltip
 
 // Branch colors - consistent red, purple, blue shades
@@ -314,6 +316,10 @@ export default function Timeline() {
   const lastDragX = useRef<number>(0);
   const lastDragY = useRef<number>(0);
 
+  // Store latest branch Y-positions so other handlers (e.g., tooltip) can use them without
+  // recomputing the physics layout on every mouse-move.
+  const branchPositionsRef = useRef<Map<string, number>>(new Map());
+
   // Update current time every minute
   useEffect(() => {
     const updateTime = () => setCurrentTime(Date.now() / 1000);
@@ -584,22 +590,145 @@ export default function Timeline() {
     // Reset alpha
     ctx.globalAlpha = 1;
 
+    /* ------------------------------------------------------------------
+       Marker collection helpers (must be initialised before any markers
+       are pushed during branch/node drawing further below).
+    ------------------------------------------------------------------*/
+    type Marker = {
+      branchId: string;
+      x: number;
+      y: number;
+      type: 'start' | 'end' | 'node';
+      label?: string;
+      color: string;
+    };
+
+    const markersByBranch: Map<string, Marker[]> = new Map();
+
+    function pushMarker(m: Marker) {
+      let arr = markersByBranch.get(m.branchId);
+      if (!arr) {
+        arr = [];
+        markersByBranch.set(m.branchId, arr);
+      }
+      arr.push(m);
+    }
+
     // ───────────────────────── Branch and Node Visualization ─────────────────────────
     
-    // Calculate branch positions (vertical spacing)
+    // ─── Physics-based layout to determine branch Y-positions ───
     const branchPositions = new Map<string, number>();
+    branchPositions.set(MAIN_BRANCH, centreY); // main branch is fixed
 
-    // Place the main "Life" branch so its nodes sit directly on the white baseline
-    branchPositions.set(MAIN_BRANCH, centreY);
-
-    // Distribute all other branches symmetrically around the centre line
-    const otherBranches = branches.filter(b => b.branchId !== MAIN_BRANCH);
-    const middleIdx = Math.floor(otherBranches.length / 2);
-
-    otherBranches.forEach((b, idx) => {
-      const branchY = centreY + (idx - middleIdx) * BRANCH_SPACING;
-      branchPositions.set(b.branchId, branchY);
+    // Build child map for alternating initial placement
+    const childrenMap = new Map<string, Branch[]>();
+    branches.forEach(br => {
+      if (br.parentBranchId) {
+        if (!childrenMap.has(br.parentBranchId)) childrenMap.set(br.parentBranchId, []);
+        childrenMap.get(br.parentBranchId)!.push(br);
+      }
     });
+
+    // BFS: for children of main branch, alternate up/down around centre.
+    // For deeper levels, place children further "outward" away from the centre line
+    // (i.e. same vertical direction as their parent relative to centre).
+    const queue: string[] = [MAIN_BRANCH];
+    while (queue.length) {
+      const parentId = queue.shift()!;
+      const parentY = branchPositions.get(parentId)!;
+      const children = childrenMap.get(parentId) || [];
+
+      // Determine the outward direction of the parent (w.r.t. centre)
+      const parentDir = parentId === MAIN_BRANCH ? 0 : (parentY >= centreY ? 1 : -1);
+
+      children.forEach((child, idx) => {
+        let dir: number;
+        if (parentId === MAIN_BRANCH) {
+          // Alternate directly above / below the centre for first-level branches
+          dir = idx % 2 === 0 ? -1 : 1;
+        } else {
+          // Place all deeper children further outwards in the same direction as parent
+          dir = parentDir === 0 ? (idx % 2 === 0 ? -1 : 1) : parentDir;
+        }
+
+        const y = parentY + dir * BRANCH_SPACING;
+        branchPositions.set(child.branchId, y);
+        queue.push(child.branchId);
+      });
+    }
+
+    // Physics simulation parameters
+    const ITERATIONS = 40;
+    const SPRING_K = 0.35;      // stronger spring keeps branch near parent
+    const REPULSION_K = 2000;   // moderate repulsion constant (pixels^3)
+    const TIME_STEP = 0.2;      // integration step for position update
+
+    // Pre-compute start/end epochs for each branch for overlap tests
+    const branchExtent = new Map<string, {start: number; end: number}>();
+    branches.forEach(br => {
+      const start = isoToEpochSeconds(br.branchStart);
+      const end = br.branchEnd ? isoToEpochSeconds(br.branchEnd) : currentTime;
+      branchExtent.set(br.branchId, { start, end });
+    });
+
+    // Simulate
+    for (let iter = 0; iter < ITERATIONS; iter++) {
+      const forces = new Map<string, number>(); // accum y-forces per branch
+
+      // Repulsive forces between overlapping branches
+      for (let i = 0; i < branches.length; i++) {
+        for (let j = i + 1; j < branches.length; j++) {
+          const bi = branches[i];
+          const bj = branches[j];
+
+          // Skip if either branch missing position (should not happen)
+          const y1 = branchPositions.get(bi.branchId);
+          const y2 = branchPositions.get(bj.branchId);
+          if (y1 === undefined || y2 === undefined) continue;
+
+          // Only consider repulsion if their lifespans overlap
+          const ext1 = branchExtent.get(bi.branchId)!;
+          const ext2 = branchExtent.get(bj.branchId)!;
+          const overlapStart = Math.max(ext1.start, ext2.start);
+          const overlapEnd = Math.min(ext1.end, ext2.end);
+          if (overlapEnd <= overlapStart) continue; // no temporal overlap
+
+          const dy = y1 - y2;
+          const dist = Math.abs(dy) + 1; // avoid division by zero
+
+          // Repulsive force inversely proportional to distance squared
+          const f = REPULSION_K / (dist * dist);
+          const dir = dy >= 0 ? 1 : -1; // push apart
+
+          forces.set(bi.branchId, (forces.get(bi.branchId) || 0) + f * dir);
+          forces.set(bj.branchId, (forces.get(bj.branchId) || 0) - f * dir);
+        }
+      }
+
+      // Spring forces toward preferred offset relative to parent
+      branches.forEach(br => {
+        if (br.branchId === MAIN_BRANCH) return; // main fixed
+        const parentY = branchPositions.get(br.parentBranchId!);
+        const y = branchPositions.get(br.branchId);
+        if (parentY === undefined || y === undefined) return;
+
+        const dir = y >= parentY ? 1 : -1; // current side (above/below)
+        const desiredY = parentY + dir * BRANCH_SPACING;
+        const springF = SPRING_K * (desiredY - y);
+        forces.set(br.branchId, (forces.get(br.branchId) || 0) + springF);
+      });
+
+      // Integrate positions (Euler)
+      branches.forEach(br => {
+        if (br.branchId === MAIN_BRANCH) return; // main stays fixed
+        const y = branchPositions.get(br.branchId)!;
+        const fy = forces.get(br.branchId) || 0;
+        branchPositions.set(br.branchId, y + fy * TIME_STEP);
+      });
+    }
+
+    // Store for tooltip access
+    branchPositionsRef.current = branchPositions;
 
     // Draw branches (skip the main "Life" branch so its line is invisible)
     branches.forEach(branch => {
@@ -619,30 +748,37 @@ export default function Timeline() {
       // Only draw if branch is visible
       if (endX < -50 || startX > size.width + 50) return;
 
-      // Draw branch line
+      // ------------------ NEW DRAWING LOGIC ------------------
       ctx.strokeStyle = getBranchColor(branch.branchId);
       ctx.lineWidth = BRANCH_HEIGHT;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      const parentY = branch.parentBranchId ? branchPositions.get(branch.parentBranchId) : undefined;
+
       ctx.beginPath();
-      ctx.moveTo(Math.max(0, startX), branchY);
+      if (parentY !== undefined) {
+        // Move from parent Y to child Y then horizontal
+        ctx.moveTo(startX, parentY);
+        ctx.lineTo(startX, branchY);
+      } else {
+        ctx.moveTo(startX, branchY);
+      }
       ctx.lineTo(Math.min(size.width, endX), branchY);
       ctx.stroke();
 
-      // Draw branch start marker
+      // Register start marker for spacing logic
       if (startX >= -10 && startX <= size.width + 10) {
-        ctx.fillStyle = getBranchColor(branch.branchId);
-        ctx.beginPath();
-        ctx.arc(startX, branchY, 8, 0, 2 * Math.PI);
-        ctx.fill();
-        
-        // Branch name label
-        ctx.font = '14px Lora, serif';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = getBranchColor(branch.branchId);
-        ctx.fillText(branch.branchName, startX, branchY - 20);
+        pushMarker({
+          branchId: branch.branchId,
+          x: startX,
+          y: parentY !== undefined ? parentY : branchY,
+          type: 'start',
+          label: branch.branchName,
+          color: getBranchColor(branch.branchId),
+        });
       } else if (startX < -10 && endX > 0) {
-        // Start node is off-screen to the left, but branch line is still visible
-        // Position label at left edge of window
+        // If off-screen, still draw the branch label at left edge (no fade needed)
         ctx.font = '14px Lora, serif';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
@@ -650,12 +786,25 @@ export default function Timeline() {
         ctx.fillText(branch.branchName, 0, branchY - 20);
       }
 
-      // Draw branch end marker (if not ongoing)
+      // Register branch end marker (if branch ends)
       if (branch.branchEnd && endX >= -10 && endX <= size.width + 10) {
-        ctx.fillStyle = getBranchColor(branch.branchId);
-        ctx.beginPath();
-        ctx.arc(endX, branchY, 8, 0, 2 * Math.PI);
-        ctx.fill();
+        const mergeY = parentY !== undefined ? parentY : branchY;
+        // Vertical connector remains drawn immediately (to keep crisp line)
+        if (parentY !== undefined) {
+          ctx.strokeStyle = getBranchColor(branch.branchId);
+          ctx.lineWidth = BRANCH_HEIGHT;
+          ctx.beginPath();
+          ctx.moveTo(endX, branchY);
+          ctx.lineTo(endX, mergeY);
+          ctx.stroke();
+        }
+        pushMarker({
+          branchId: branch.branchId,
+          x: endX,
+          y: mergeY,
+          type: 'end',
+          color: getBranchColor(branch.branchId),
+        });
       }
     });
 
@@ -670,25 +819,17 @@ export default function Timeline() {
       // Only draw if node is visible
       if (nodeX < -20 || nodeX > size.width + 20) return;
 
-      // Draw node circle with branch color
+      // Register node marker for spacing logic
       const branchColor = getBranchColor(node.branchId);
-      ctx.fillStyle = branchColor;
-      ctx.beginPath();
-      ctx.arc(nodeX, branchY, NODE_RADIUS, 0, 2 * Math.PI);
-      ctx.fill();
-      
-      // Draw node border
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // Draw node label (shortened content)
       const shortContent = node.content.length > 30 ? node.content.substring(0, 30) + '...' : node.content;
-      ctx.font = '12px Lora, serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillText(shortContent, nodeX, branchY + 15);
+      pushMarker({
+        branchId: node.branchId,
+        x: nodeX,
+        y: branchY,
+        type: 'node',
+        label: shortContent,
+        color: branchColor,
+      });
     });
 
     // Red "today" line (unchanged)
@@ -700,6 +841,55 @@ export default function Timeline() {
       ctx.lineTo(todayX, size.height);
       ctx.stroke();
     }
+
+    /**
+     * Collect markers first so we can decide which ones to hide / fade based
+     * on pixel spacing after all x-positions are known.
+     */
+    markersByBranch.forEach(list => {
+      list.sort((a, b) => a.x - b.x);
+      list.forEach((m, idx) => {
+        const prevX = idx > 0 ? list[idx - 1].x : -Infinity;
+        const nextX = idx < list.length - 1 ? list[idx + 1].x : Infinity;
+        const gap = Math.min(m.x - prevX, nextX - m.x);
+        const fadeStart = MIN_MARKER_SPACING - FADE_RANGE;
+        let alpha: number;
+        if (gap >= MIN_MARKER_SPACING) alpha = 1;
+        else if (gap <= fadeStart) alpha = 0;
+        else alpha = (gap - fadeStart) / FADE_RANGE;
+
+        if (alpha <= 0) return; // hidden
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+
+        // Draw circle
+        const radius = m.type === 'node' ? NODE_RADIUS : 8;
+        ctx.fillStyle = m.color;
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, radius, 0, 2 * Math.PI);
+        ctx.fill();
+
+        // White border for nodes
+        if (m.type === 'node') {
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+
+        // Label
+        if (m.label) {
+          ctx.font = m.type === 'node' ? '12px Lora, serif' : '14px Lora, serif';
+          ctx.textAlign = m.type === 'node' ? 'center' : 'left';
+          ctx.textBaseline = 'top';
+          ctx.fillStyle = m.type === 'node' ? '#FFFFFF' : m.color;
+          const labelY = m.type === 'node' ? (m.y + 15) : (m.y - 20);
+          ctx.fillText(m.label, m.x, labelY);
+        }
+
+        ctx.restore();
+      });
+    });
   };
 
   // Redraw when currentTime changes
@@ -787,14 +977,9 @@ export default function Timeline() {
       const secPerPx = scaleSecPerPx.current;
       const offsetSec = offsetEpochSec.current;
       
-      // Calculate branch positions
-      const branchPositions = new Map<string, number>();
-      let branchIndex = 0;
-      branches.forEach(branch => {
-        const branchY = centreY + (branchIndex - Math.floor(branches.length / 2)) * BRANCH_SPACING;
-        branchPositions.set(branch.branchId, branchY);
-        branchIndex++;
-      });
+      // Use latest physics-based positions computed during draw
+      const branchPositions = branchPositionsRef.current;
+      if (branchPositions.size === 0) return;
 
       let foundTooltip = false;
 
