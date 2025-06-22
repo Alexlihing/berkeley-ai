@@ -591,7 +591,7 @@ type BranchSide = 'above' | 'below';
 const Timeline = forwardRef(function Timeline({ nodes, branches, loading, onSlidingStateChange }: TimelineProps, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animationRef = useRef<number>();
+  const animationRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
   const velocityRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const isDraggingRef = useRef<boolean>(false);
@@ -2108,11 +2108,6 @@ const Timeline = forwardRef(function Timeline({ nodes, branches, loading, onSlid
   const todayLabelY = useRef<number>(25);
 
   // Helper to get the earliest branch start (hardcoded for testing)
-  const getEarliestBranchStart = () => {
-    // Hardcoded to 1 Jan 2023 UTC
-    return new Date('2023-01-01T00:00:00Z').getTime() / 1000;
-  };
-
   const pauseSlidingWindow = () => {
     if (!isSliding || isPaused) return;
     setIsPaused(true);

@@ -140,8 +140,9 @@ export default function Home() {
       const zoomMultiplier = viewportData.zoomLevel || 1.0;
       const adjustedGranularity = viewportData.granularity * zoomMultiplier;
       
-      // Center the timeline on the target location
-      w.focusViewportToLoc(viewportData.timestamp, viewportData.y, adjustedGranularity);
+      // Center the timeline on the target location with main timeline vertically centered
+      const centerY = window.innerHeight / 2;
+      w.focusViewportToLoc(viewportData.timestamp, centerY, adjustedGranularity);
       
       // Handle different animation types with progress updates
       if (viewportData.animationType === 'node-fade') {
