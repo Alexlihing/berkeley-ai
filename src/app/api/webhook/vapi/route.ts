@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { VapiService } from '@/lib/vapiService';
 
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest, response: NextResponse) {
   try {
     const { message } = await request.json();
     
@@ -14,7 +14,9 @@ export async function POST(request: NextRequest) {
         console.log(`${message.role}: ${message.transcript}`);
         break;
         
-      case 'function-call':
+      case 'tool-calls':
+        console.log('Received message:', message);
+        console.log('toolCallList', message.toolCallList[0].function)
         return handleFunctionCall(message);
         
       default:
@@ -32,24 +34,28 @@ export async function POST(request: NextRequest) {
 }
 
 function handleFunctionCall(message: any) {
-  const { functionCall } = message;
+  const functionCall = message;
   
   try {
     const result = VapiService.handleFunctionCall(functionCall);
+
+    const result_json = {
+      // type: 'function-call-result',
+      results: [{
+      toolCallId: functionCall.toolCallList[0].id,
+      result: result
+      }],
+    }
+
+    console.log('Function call result:', result_json);
     
-    return NextResponse.json({
-      type: 'function-call-result',
-      functionCallResult: {
-        callId: functionCall.callId,
-        result: result
-      }
-    });
+    return NextResponse.json(result_json);
   } catch (error) {
     console.error('Function call error:', error);
     return NextResponse.json({
       type: 'function-call-result',
       functionCallResult: {
-        callId: functionCall.callId,
+        callId: functionCall.toolCallList[0].id,
         error: 'Function call failed'
       }
     });

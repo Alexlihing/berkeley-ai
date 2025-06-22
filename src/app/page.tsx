@@ -22,9 +22,9 @@ interface TreeNode {
 
 interface TreeStats {
   totalNodes: number;
-  branches: string[];
-  activeBranches: number;
-  completedBranches: number;
+  totalBranches: number;
+  nodesByBranch?: { nodeCount: number }[];
+  recentActivity?: string[];
 }
 
 export default function Home() {
@@ -35,7 +35,7 @@ export default function Home() {
   const [isCallActive, setIsCallActive] = useState(false);
   const [transcript, setTranscript] = useState<string>('');
   const [messages, setMessages] = useState<Array<{role: string, transcript: string}>>([]);
-  const [assistantId, setAssistantId] = useState<string>('');
+  const [assistantId, setAssistantId] = useState<string>('93287982-e8ea-4b30-8515-bf5ea783c2cf');
   const [showConfig, setShowConfig] = useState(false);
   const vapiRef = useRef<Vapi | null>(null);
 
@@ -44,7 +44,14 @@ export default function Home() {
     setError(null);
     try {
       const response = await fetch('/api/tree');
+      console.log('Tree response status:', response.status);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
       const data = await response.json();
+      console.log('Tree data:', data);
       
       if (data.success) {
         setTree(data.tree);
@@ -53,15 +60,18 @@ export default function Home() {
         setError(data.error || 'Failed to fetch tree');
       }
     } catch (err) {
-      setError('Failed to fetch tree data');
       console.error('Error fetching tree:', err);
+      setError(`Failed to fetch tree data: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
   };
 
   const startVapiCall = async () => {
-    if (!process.env.NEXT_PUBLIC_VAPI_API_KEY) {
+    // For client-side, we need to use NEXT_PUBLIC_ prefix
+    const apiKey = process.env.NEXT_PUBLIC_VAPI_API_KEY;
+    
+    if (!apiKey) {
       setError('VAPI API key not found. Please set NEXT_PUBLIC_VAPI_API_KEY in your environment variables.');
       return;
     }
@@ -78,7 +88,7 @@ export default function Home() {
       setMessages([]);
 
       // Initialize Vapi with your public API key (following docs exactly)
-      vapiRef.current = new Vapi(process.env.VAPI_API_KEY);
+      vapiRef.current = new Vapi(apiKey);
 
       // Listen for events (following docs exactly)
       vapiRef.current.on('call-start', () => {
@@ -94,7 +104,7 @@ export default function Home() {
 
       vapiRef.current.on('message', (message) => {
         if (message.type === 'transcript') {
-          console.log(`${message.role}: ${message.transcript}`);
+          // console.log(`${message.role}: ${message.transcript}`);
           setMessages(prev => [...prev, { role: message.role, transcript: message.transcript }]);
           setTranscript(message.transcript);
         }
@@ -242,6 +252,33 @@ export default function Home() {
             )}
           </div>
 
+          <div className="flex justify-center gap-4 mb-4">
+            <button
+              onClick={async () => {
+                try {
+                  const response = await fetch('/api/tree/sample', { method: 'POST' });
+                  const data = await response.json();
+                  if (data.success) {
+                    fetchTree(); // Refresh the tree
+                  } else {
+                    setError('Failed to generate sample data');
+                  }
+                } catch (err) {
+                  setError('Failed to generate sample data');
+                }
+              }}
+              className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+            >
+              📊 Generate Sample Data
+            </button>
+            <button
+              onClick={fetchTree}
+              className="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+            >
+              🔄 Refresh Tree
+            </button>
+          </div>
+
           {isCallActive && (
             <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
               🎤 Call Active - Speak to add to your life tree!
@@ -281,16 +318,16 @@ export default function Home() {
                 <div className="text-sm text-gray-600">Total Nodes</div>
               </div>
               <div className="text-center">
-                <div className="text-2xl font-bold text-green-600">{stats.branches.length}</div>
+                <div className="text-2xl font-bold text-green-600">{stats.totalBranches}</div>
                 <div className="text-sm text-gray-600">Branches</div>
               </div>
               <div className="text-center">
-                <div className="text-2xl font-bold text-yellow-600">{stats.activeBranches}</div>
+                <div className="text-2xl font-bold text-yellow-600">{stats.nodesByBranch?.filter(b => b.nodeCount > 0).length || 0}</div>
                 <div className="text-sm text-gray-600">Active</div>
               </div>
               <div className="text-center">
-                <div className="text-2xl font-bold text-gray-600">{stats.completedBranches}</div>
-                <div className="text-sm text-gray-600">Completed</div>
+                <div className="text-2xl font-bold text-gray-600">{stats.recentActivity?.length || 0}</div>
+                <div className="text-sm text-gray-600">Recent</div>
               </div>
             </div>
           </div>
