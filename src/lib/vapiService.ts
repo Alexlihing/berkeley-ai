@@ -8,17 +8,21 @@ export class VapiService {
     return [
       {
         name: "add_node",
-        description: "Add a new node with content to a branch",
+        description: "Add a new node with content to a branch. You can use either the branch ID or branch name.",
         parameters: {
           type: "object",
           properties: {
             branchId: {
               type: "string",
-              description: "ID of the branch to add the node to"
+              description: "ID or name of the branch to add the node to"
             },
             content: {
               type: "string",
               description: "Markdown content for the node"
+            },
+            timestamp: {
+              type: "string",
+              description: "ISO timestamp for when this event occurred (optional, defaults to current time)"
             }
           },
           required: ["branchId", "content"]
@@ -41,6 +45,10 @@ export class VapiService {
             branchSummary: {
               type: "string",
               description: "Summary description of what this branch contains"
+            },
+            timestamp: {
+              type: "string",
+              description: "ISO timestamp for when this branch started (optional, defaults to current time)"
             }
           },
           required: ["parentBranchId", "branchName", "branchSummary"]
@@ -102,6 +110,10 @@ export class VapiService {
             content: {
               type: "string",
               description: "New content for the node"
+            },
+            timestamp: {
+              type: "string",
+              description: "ISO timestamp for when this event occurred (optional, defaults to current time)"
             }
           },
           required: ["uuid", "content"]
@@ -169,6 +181,62 @@ export class VapiService {
           },
           required: ["branchId", "summary"]
         }
+      },
+      {
+        name: "update_branch",
+        description: "Update an existing branch's properties",
+        parameters: {
+          type: "object",
+          properties: {
+            branchId: {
+              type: "string",
+              description: "ID of the branch to update"
+            },
+            branchName: {
+              type: "string",
+              description: "New name for the branch (optional)"
+            },
+            branchSummary: {
+              type: "string",
+              description: "New summary description for the branch (optional)"
+            },
+            parentBranchId: {
+              type: "string",
+              description: "New parent branch ID (optional)"
+            },
+            branchStart: {
+              type: "string",
+              description: "ISO timestamp for when this branch started (optional)"
+            },
+            branchEnd: {
+              type: "string",
+              description: "ISO timestamp for when this branch ended (optional, use empty string to mark as active)"
+            }
+          },
+          required: ["branchId"]
+        }
+      },
+      {
+        name: "get_branch",
+        description: "Get detailed information about a specific branch",
+        parameters: {
+          type: "object",
+          properties: {
+            branchId: {
+              type: "string",
+              description: "ID of the branch to get information about"
+            }
+          },
+          required: ["branchId"]
+        }
+      },
+      {
+        name: "get_branches",
+        description: "Get a list of all available branches with their names and IDs",
+        parameters: {
+          type: "object",
+          properties: {}
+        }
       }
     ];
   }
@@ -218,6 +286,15 @@ export class VapiService {
         case 'close_branch':
           result = this.handleCloseBranch(parameters);
           break;
+        case 'update_branch':
+          result = this.handleUpdateBranch(parameters);
+          break;
+        case 'get_branch':
+          result = this.handleGetBranch(parameters);
+          break;
+        case 'get_branches':
+          result = this.handleGetBranches();
+          break;
         default:
           result = {
             success: false,
@@ -237,22 +314,43 @@ export class VapiService {
   }
 
   private static handleAddNode(parameters: any) {
-    const { branchId, content } = parameters;
+    const { branchId, content, timestamp } = parameters;
     console.log('branchId', branchId);
     console.log('content', content);
-    const newNode = TreeService.addNode(branchId, content);
+    
+    // Check if branch exists by ID first
+    const branchById = TreeService.findBranchById(branchId);
+    const branchByName = !branchById ? TreeService.findBranchByName(branchId) : null;
+    
+    const newNode = TreeService.addNode(branchId, content, timestamp);
     console.log('newNode', newNode);
+    
+    let message = `Added new node to branch`;
+    let branchInfo = null;
+    
+    if (branchById) {
+      message = `Added new node to branch "${branchById.branchName}" (ID: ${branchId})`;
+      branchInfo = branchById;
+    } else if (branchByName) {
+      message = `Added new node to branch "${branchByName.branchName}" (resolved from name: "${branchId}")`;
+      branchInfo = branchByName;
+    } else {
+      message = `Added new node to branch ID "${branchId}" (branch not found, node may be orphaned)`;
+    }
+    
     return {
       success: true,
-      message: `Added new node to branch`,
-      node: newNode
+      message: message,
+      node: newNode,
+      branch: branchInfo,
+      branchResolved: !!(branchById || branchByName)
     };
   }
 
   private static handleAddBranch(parameters: any) {
-    const { parentBranchId, branchName, branchSummary } = parameters;
+    const { parentBranchId, branchName, branchSummary, timestamp } = parameters;
     
-    const newBranch = TreeService.addBranch(parentBranchId, branchName, branchSummary);
+    const newBranch = TreeService.addBranch(parentBranchId, branchName, branchSummary, timestamp);
     return {
       success: true,
       message: `Created new branch: ${branchName}`,
@@ -306,9 +404,9 @@ export class VapiService {
   }
 
   private static handleUpdateNode(parameters: any) {
-    const { uuid, content } = parameters;
+    const { uuid, content, timestamp } = parameters;
     
-    const updatedNode = TreeService.updateNode(uuid, { content });
+    const updatedNode = TreeService.updateNode(uuid, { content }, timestamp);
     if (updatedNode) {
       return {
         success: true,
@@ -379,5 +477,66 @@ export class VapiService {
         message: `Branch not found or could not be closed`
       };
     }
+  }
+
+  private static handleUpdateBranch(parameters: any) {
+    const { branchId, branchName, branchSummary, parentBranchId, branchStart, branchEnd } = parameters;
+    
+    // Build updates object with only defined values
+    const updates: Partial<Branch> = {};
+    if (branchName !== undefined) updates.branchName = branchName;
+    if (branchSummary !== undefined) updates.branchSummary = branchSummary;
+    if (parentBranchId !== undefined) updates.parentBranchId = parentBranchId;
+    if (branchStart !== undefined) updates.branchStart = branchStart;
+    if (branchEnd !== undefined) updates.branchEnd = branchEnd;
+    
+    const updatedBranch = TreeService.updateBranch(branchId, updates);
+    
+    if (updatedBranch) {
+      return {
+        success: true,
+        message: `Updated branch successfully`,
+        branch: updatedBranch
+      };
+    } else {
+      return {
+        success: false,
+        message: `Branch not found or could not be updated`
+      };
+    }
+  }
+
+  private static handleGetBranch(parameters: any) {
+    const { branchId } = parameters;
+    
+    const branch = TreeService.getBranch(branchId);
+    if (branch) {
+      const nodes = TreeService.getNodesByBranch(branchId);
+      return {
+        success: true,
+        message: `Retrieved information about branch`,
+        branch: branch,
+        nodes: nodes,
+        nodeCount: nodes.length
+      };
+    } else {
+      return {
+        success: false,
+        message: `Branch not found`
+      };
+    }
+  }
+
+  private static handleGetBranches() {
+    const branches = TreeService.getAllBranches();
+    const branchInfo = branches.map(branch => ({
+      branchId: branch.branchId,
+      branchName: branch.branchName
+    }));
+    return {
+      success: true,
+      message: `Retrieved ${branchInfo.length} branches`,
+      branches: branchInfo
+    };
   }
 } 
