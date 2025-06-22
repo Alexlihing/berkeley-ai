@@ -157,6 +157,25 @@ export default function Home() {
       // Start voice conversation (following docs exactly)
       await vapiRef.current.start(assistantId);
 
+      // Send life tree context immediately after starting
+      if (tree && stats) {
+        const treeContext = {
+          tree: tree,
+          stats: stats,
+          totalNodes: stats.totalNodes,
+          totalBranches: stats.totalBranches,
+          recentActivity: stats.recentActivity || []
+        };
+
+        vapiRef.current.send({
+          type: "add-message",
+          message: {
+            role: "system",
+            content: `Here is the current state of the user's life tree: ${JSON.stringify(treeContext, null, 2)}. Use this context to help the user manage their life tree effectively.`,
+          },
+        });
+      }
+
     } catch (err) {
       console.error('Error starting Vapi call:', err);
       setError('Failed to start voice call');
