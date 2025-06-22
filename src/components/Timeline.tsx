@@ -177,13 +177,10 @@ function generateTicks(startEpochSec: number, endEpochSec: number, stepSec: numb
 function formatLabel(epochSec: number, stepSec: number) {
   const date = new Date(epochSec * 1000);
 
-  if (stepSec < SECONDS_IN_HOUR) {
-    // up to minutes → HH:MM
-    return date.toTimeString().substring(0, 5); // Use local timezone
-  }
   if (stepSec < SECONDS_IN_DAY) {
-    // hours → HH:00
-    return `${date.toTimeString().substring(0, 2)}:00`; // Use local timezone
+    const dayPart = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const hourPart = `${date.toTimeString().substring(0, 2)}:${date.toTimeString().substring(3, 5)}`;
+    return `${dayPart} ${hourPart}`;
   }
   if (stepSec < 30 * SECONDS_IN_DAY) {
     // days → MMM d
@@ -245,11 +242,19 @@ export default function Timeline() {
     const minSecPerPx = (80 * SECONDS_IN_YEAR) / size.width;   // 80 y per screen
     const maxSecPerPx = (1 * SECONDS_IN_HOUR) / size.width;    // 1 h per screen
 
-    // Start with ~1 year per screen
-    scaleSecPerPx.current = Math.max(Math.min(SECONDS_IN_YEAR / size.width, minSecPerPx), maxSecPerPx);
+    // Initial view: 8 hours of history with red line at 60% from left
+    const historySeconds = 8 * SECONDS_IN_HOUR; // 8 hours of history
+    const futureSeconds = (historySeconds * 0.4) / 0.6; // Calculate future time to make red line at 60%
+    const totalTimeSpan = historySeconds + futureSeconds;
+    
+    scaleSecPerPx.current = totalTimeSpan / size.width;
+    
+    // Clamp to zoom limits
+    scaleSecPerPx.current = Math.max(Math.min(scaleSecPerPx.current, minSecPerPx), maxSecPerPx);
 
-    // centre "now" roughly in the middle
-    offsetEpochSec.current = currentTime - (scaleSecPerPx.current * size.width) / 2;
+    // Position red line at 60% from left (showing 8 hours of history)
+    const redLinePosition = 0.6; // 60% from left
+    offsetEpochSec.current = currentTime - (scaleSecPerPx.current * size.width * redLinePosition);
 
     // Ensure we don't pan before birth date
     const minOffset = BIRTH_DATE_EPOCH_SEC;
@@ -326,13 +331,34 @@ export default function Timeline() {
       // Apply left padding to x position
       const adjustedX = x + leftPadding;
 
-      // Grey full-height bar (always draw)
-      ctx.strokeStyle = '#444444';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(adjustedX, 0);
-      ctx.lineTo(adjustedX, size.height);
-      ctx.stroke();
+      // Only draw gray lines and labels for times at or after birth date
+      if (t >= BIRTH_DATE_EPOCH_SEC) {
+        // Grey full-height bar (only draw for times after birth)
+        ctx.strokeStyle = '#444444';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(adjustedX, 0);
+        ctx.lineTo(adjustedX, size.height);
+        ctx.stroke();
+
+        // Labels at top of screen, to the right of gray lines (only for times after birth)
+        ctx.fillStyle = '#FFFFFF';
+        const label = formatLabel(t, step);
+        
+        // Check if label contains both day and time (has a space)
+        if ((step < SECONDS_IN_DAY) && label.includes(' ')) {
+          // Split day and time and draw on separate lines
+          const parts = label.split(' ');
+          const dayPart = parts[0] + ' ' + parts[1]; // "Jan 15"
+          const timePart = parts[2]; // "09:00"
+          
+          ctx.fillText(dayPart, adjustedX + 5, 10); // Day on first line
+          ctx.fillText(timePart, adjustedX + 5, 25); // Time on second line (15px lower)
+        } else {
+          // Single line label
+          ctx.fillText(label, adjustedX + 5, 10);
+        }
+      }
 
       // White tick only within timeline bounds (birth to today)
       if (t >= BIRTH_DATE_EPOCH_SEC && t <= currentTime) {
@@ -344,10 +370,6 @@ export default function Timeline() {
         ctx.lineTo(adjustedX, centreY + 8);
         ctx.stroke();
       }
-
-      // Labels at top of screen, to the right of gray lines (always draw)
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillText(formatLabel(t, step), adjustedX + 5, 10); // 5px to the right of line, 10px from top
     }
 
     // Red "today" line, with left padding
