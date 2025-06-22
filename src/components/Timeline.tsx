@@ -16,6 +16,11 @@ const BIRTH_DATE_EPOCH_SEC = 0; // Unix epoch
 // Left padding when near birth date (in pixels)
 const LEFT_PADDING = 100;
 
+// Animation constants
+const ANIMATION_DURATION = 300; // ms
+const VELOCITY_DECAY = 0.94; // Higher for more natural floating feel
+const MIN_VELOCITY = 0.1; // Lower threshold for longer gliding
+
 // Candidate tick spacings (in seconds) ordered from fine → coarse
 const TICK_STEPS: number[] = [
   1 * SECONDS_IN_MINUTE,    // 1 min
@@ -35,6 +40,11 @@ const TICK_STEPS: number[] = [
   5 * SECONDS_IN_YEAR,      // 5 year
   10 * SECONDS_IN_YEAR,     // 10 year
 ];
+
+// Easing function (ease out cubic)
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
 
 /**
  * Pick the smallest tick step whose pixel spacing is at least `minPx`.
@@ -209,11 +219,30 @@ export default function Timeline() {
   const offsetEpochSec = useRef<number>(0); // UNIX time (seconds) at x = 0
   const offsetY = useRef<number>(0); // vertical offset in pixels
 
+  // Animation state
+  const animationId = useRef<number>(0);
+  const velocityX = useRef<number>(0);
+  const velocityY = useRef<number>(0);
+  const isAnimating = useRef<boolean>(false);
+
+  // Zoom animation state
+  const zoomAnimation = useRef<{
+    startScale: number;
+    targetScale: number;
+    startOffset: number;
+    targetOffset: number;
+    startTime: number;
+    pointerX: number;
+  } | null>(null);
+
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
   const dragStartY = useRef(0);
   const dragStartOffset = useRef(0);
   const dragStartOffsetY = useRef(0);
+  const lastDragTime = useRef<number>(0);
+  const lastDragX = useRef<number>(0);
+  const lastDragY = useRef<number>(0);
 
   // Update current time every minute
   useEffect(() => {
@@ -223,6 +252,82 @@ export default function Timeline() {
     const interval = setInterval(updateTime, 60000); // Update every minute
     return () => clearInterval(interval);
   }, []);
+
+  // Animation loop
+  const animate = () => {
+    let needsRedraw = false;
+
+    // Handle zoom animation
+    if (zoomAnimation.current) {
+      const now = Date.now();
+      const elapsed = now - zoomAnimation.current.startTime;
+      const progress = Math.min(elapsed / ANIMATION_DURATION, 1);
+      const easedProgress = easeOutCubic(progress);
+
+      // Interpolate scale and offset
+      scaleSecPerPx.current = zoomAnimation.current.startScale + 
+        (zoomAnimation.current.targetScale - zoomAnimation.current.startScale) * easedProgress;
+      
+      offsetEpochSec.current = zoomAnimation.current.startOffset + 
+        (zoomAnimation.current.targetOffset - zoomAnimation.current.startOffset) * easedProgress;
+
+      needsRedraw = true;
+
+      if (progress >= 1) {
+        zoomAnimation.current = null;
+      }
+    }
+
+    // Handle momentum animation
+    if (isAnimating.current && !isDragging.current) {
+      const absVelX = Math.abs(velocityX.current);
+      const absVelY = Math.abs(velocityY.current);
+
+      if (absVelX > MIN_VELOCITY || absVelY > MIN_VELOCITY) {
+        // Apply momentum - convert horizontal velocity to timeline units per frame
+        const horizontalMovement = velocityX.current * scaleSecPerPx.current;
+        const newOffsetX = offsetEpochSec.current + horizontalMovement;
+        const newOffsetY = offsetY.current + velocityY.current;
+
+        // Constrain horizontal movement with smooth boundary handling
+        const constrainedOffsetX = Math.max(newOffsetX, BIRTH_DATE_EPOCH_SEC);
+        
+        // If we hit the boundary, reduce horizontal velocity to prevent bounce
+        if (constrainedOffsetX !== newOffsetX) {
+          velocityX.current *= 0.2; // Even more dramatic reduction when hitting boundary
+        }
+        
+        offsetEpochSec.current = constrainedOffsetX;
+        offsetY.current = newOffsetY; // Vertical has no constraints
+
+        // Decay velocity
+        velocityX.current *= VELOCITY_DECAY;
+        velocityY.current *= VELOCITY_DECAY;
+
+        needsRedraw = true;
+      } else {
+        isAnimating.current = false;
+        velocityX.current = 0;
+        velocityY.current = 0;
+      }
+    }
+
+    if (needsRedraw) {
+      draw();
+    }
+
+    if (zoomAnimation.current || isAnimating.current) {
+      animationId.current = requestAnimationFrame(animate);
+    }
+  };
+
+  // Start animation loop when needed
+  const startAnimation = () => {
+    if (animationId.current) {
+      cancelAnimationFrame(animationId.current);
+    }
+    animationId.current = requestAnimationFrame(animate);
+  };
 
   // ───────────────────────── Resize handling ──────────────────────────
   useEffect(() => {
@@ -269,6 +374,15 @@ export default function Timeline() {
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.width, currentTime]);
+
+  // Cleanup animation on unmount
+  useEffect(() => {
+    return () => {
+      if (animationId.current) {
+        cancelAnimationFrame(animationId.current);
+      }
+    };
+  }, []);
 
   // ───────────────────────── Canvas drawing ───────────────────────────
   const draw = () => {
@@ -408,13 +522,40 @@ export default function Timeline() {
       dragStartY.current = e.clientY;
       dragStartOffset.current = offsetEpochSec.current;
       dragStartOffsetY.current = offsetY.current;
+      lastDragTime.current = Date.now();
+      lastDragX.current = e.clientX;
+      lastDragY.current = e.clientY;
+      
+      // Stop any ongoing animation
+      isAnimating.current = false;
+      velocityX.current = 0;
+      velocityY.current = 0;
+      
       container.classList.add('cursor-grabbing');
     };
 
     const onMouseMove = (e: MouseEvent) => {
       if (!isDragging.current) return;
+      
+      const now = Date.now();
+      const deltaTime = now - lastDragTime.current;
       const deltaX = e.clientX - dragStartX.current;
       const deltaY = e.clientY - dragStartY.current;
+      
+      // Calculate velocity for momentum - make it more responsive to drag speed
+      if (deltaTime > 0 && deltaTime < 50) { // Only calculate velocity for recent movements
+        const currentVelX = (e.clientX - lastDragX.current) / Math.max(deltaTime, 1) * 16;
+        const currentVelY = (e.clientY - lastDragY.current) / Math.max(deltaTime, 1) * 16;
+        
+        // Less aggressive capping for more natural feel
+        const maxVel = 20;
+        const cappedVelX = Math.max(-maxVel, Math.min(maxVel, currentVelX));
+        const cappedVelY = Math.max(-maxVel, Math.min(maxVel, currentVelY));
+        
+        // More responsive velocity tracking (less smoothing)
+        velocityX.current = velocityX.current * 0.5 + cappedVelX * 0.5;
+        velocityY.current = velocityY.current * 0.5 + cappedVelY * 0.5;
+      }
       
       // Horizontal panning
       const newOffset = dragStartOffset.current - deltaX * scaleSecPerPx.current;
@@ -423,12 +564,31 @@ export default function Timeline() {
       // Vertical panning
       offsetY.current = dragStartOffsetY.current + deltaY;
       
+      lastDragTime.current = now;
+      lastDragX.current = e.clientX;
+      lastDragY.current = e.clientY;
+      
       draw();
     };
 
     const endDrag = () => {
-      isDragging.current = false;
-      container.classList.remove('cursor-grabbing');
+      if (isDragging.current) {
+        isDragging.current = false;
+        container.classList.remove('cursor-grabbing');
+        
+        // Keep both horizontal and vertical in pixel units for consistency
+        velocityX.current = velocityX.current * 0.8; // Same as vertical now
+        velocityY.current = velocityY.current * 0.8;
+        
+        // Start momentum animation if velocity is significant
+        const absVelX = Math.abs(velocityX.current);
+        const absVelY = Math.abs(velocityY.current);
+        
+        if (absVelX > MIN_VELOCITY || absVelY > MIN_VELOCITY) {
+          isAnimating.current = true;
+          startAnimation();
+        }
+      }
     };
 
     const onWheel = (e: WheelEvent) => {
@@ -445,13 +605,27 @@ export default function Timeline() {
       const adjustedPointerX = pointerX - leftPadding;
       const timeAtPointer = offsetEpochSec.current + adjustedPointerX * scaleSecPerPx.current;
 
-      const zoomFactor = Math.exp(e.deltaY * 0.001); // smooth exponential zoom
-      scaleSecPerPx.current = Math.min(Math.max(scaleSecPerPx.current * zoomFactor, maxSecPerPx), minSecPerPx);
+      const zoomFactor = Math.exp(e.deltaY * 0.008);
+      const targetScale = Math.min(Math.max(scaleSecPerPx.current * zoomFactor, maxSecPerPx), minSecPerPx);
+      const targetOffset = Math.max(timeAtPointer - adjustedPointerX * targetScale, BIRTH_DATE_EPOCH_SEC);
 
-      const newOffset = timeAtPointer - adjustedPointerX * scaleSecPerPx.current;
-      // Prevent panning before birth date
-      offsetEpochSec.current = Math.max(newOffset, BIRTH_DATE_EPOCH_SEC);
-      draw();
+      // For now, let's use immediate zoom to test if the issue is with animation
+      if (Math.abs(targetScale - scaleSecPerPx.current) < 0.001) {
+        // No significant change, skip animation
+        return;
+      }
+
+      // Start zoom animation
+      zoomAnimation.current = {
+        startScale: scaleSecPerPx.current,
+        targetScale: targetScale,
+        startOffset: offsetEpochSec.current,
+        targetOffset: targetOffset,
+        startTime: Date.now(),
+        pointerX: adjustedPointerX
+      };
+
+      startAnimation();
     };
 
     container.addEventListener('mousedown', onMouseDown);
