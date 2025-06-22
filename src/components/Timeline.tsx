@@ -460,7 +460,7 @@ export default function Timeline() {
 
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.width, currentTime]);
+  }, [size.width]);
 
   // Cleanup animation on unmount
   useEffect(() => {
