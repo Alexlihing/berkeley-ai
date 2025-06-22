@@ -271,9 +271,7 @@ export default function Home() {
   };
 
   useEffect(() => {
-    fetchTree();
-    fetchNodes();
-    fetchBranches();
+    refreshAllData();
   }, []);
 
   // Function to refresh all data

@@ -165,6 +165,19 @@ function formatDateForTooltip(isoString: string): string {
   });
 }
 
+// Utility function to format current datetime for the today line
+function formatCurrentDateTime(epochSeconds: number): string {
+  const date = new Date(epochSeconds * 1000);
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+    // Removed seconds to only show up to the minute
+  });
+}
+
 // Easing function (ease out cubic)
 function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
@@ -737,12 +750,12 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
     return { positions, sides };
   };
 
-  // Update current time every minute
+  // Update current time every second
   useEffect(() => {
     const updateTime = () => setCurrentTime(Date.now() / 1000);
     updateTime();
     
-    const interval = setInterval(updateTime, 60000); // Update every minute
+    const interval = setInterval(updateTime, 1000); // Update every second
     return () => clearInterval(interval);
   }, []);
 
@@ -1367,6 +1380,22 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
       ctx.moveTo(todayX, 0);
       ctx.lineTo(todayX, size.height);
       ctx.stroke();
+      
+      // Add current datetime label next to the top bar
+      const currentDateTime = formatCurrentDateTime(currentTime);
+      ctx.font = '12px Lora, serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = '#FF0000'; // Same red color as the line
+      
+      // Position the label to the right of the line, below the tick labels
+      const labelX = todayX + 10;
+      const labelY = 35; // Moved down from 10 to 35 to avoid overlap with tick labels
+      
+      // Only draw if the label would be visible
+      if (labelX < size.width - 150) { // Leave some margin for the label
+        ctx.fillText(currentDateTime, labelX, labelY);
+      }
     }
   };
 
