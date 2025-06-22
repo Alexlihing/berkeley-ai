@@ -9,63 +9,102 @@ export async function GET(request: NextRequest) {
 
     switch (action) {
       case 'stats':
-        const stats = TreeService.getStats();
-        return NextResponse.json(stats);
+        const statsOnly = TreeService.getStats();
+        return NextResponse.json({ success: true, stats: statsOnly });
 
       case 'nodes':
         const nodes = TreeService.getAllNodes();
-        return NextResponse.json(nodes);
+        return NextResponse.json({ success: true, nodes });
 
       case 'branches':
         const branches = TreeService.getAllBranches();
-        return NextResponse.json(branches);
+        return NextResponse.json({ success: true, branches });
 
       case 'search':
         const searchTerm = searchParams.get('q');
         if (!searchTerm) {
           return NextResponse.json(
-            { error: 'Search term is required' },
+            { success: false, error: 'Search term is required' },
             { status: 400 }
           );
         }
         const searchResults = TreeService.searchNodesByContent(searchTerm);
-        return NextResponse.json(searchResults);
+        return NextResponse.json({ success: true, results: searchResults });
 
       case 'recent':
         const limit = parseInt(searchParams.get('limit') || '10');
         const recentNodes = TreeService.getRecentNodes(limit);
-        return NextResponse.json(recentNodes);
+        return NextResponse.json({ success: true, nodes: recentNodes });
 
       case 'by-branch':
         const branchId = searchParams.get('branchId');
         if (!branchId) {
           return NextResponse.json(
-            { error: 'branchId is required' },
+            { success: false, error: 'branchId is required' },
             { status: 400 }
           );
         }
         const branchNodes = TreeService.getNodesByBranch(branchId);
-        return NextResponse.json(branchNodes);
+        return NextResponse.json({ success: true, nodes: branchNodes });
 
       case 'date-range':
         const startDate = searchParams.get('startDate');
         const endDate = searchParams.get('endDate');
         if (!startDate || !endDate) {
           return NextResponse.json(
-            { error: 'startDate and endDate are required' },
+            { success: false, error: 'startDate and endDate are required' },
             { status: 400 }
           );
         }
         const dateRangeNodes = TreeService.getNodesByDateRange(startDate, endDate);
-        return NextResponse.json(dateRangeNodes);
+        return NextResponse.json({ success: true, nodes: dateRangeNodes });
 
       default:
-        // Return both nodes and branches
-        const allNodes = TreeService.getAllNodes();
+        // Return the complete tree structure and stats
         const allBranches = TreeService.getAllBranches();
+        const allNodes = TreeService.getAllNodes();
+        const treeStats = TreeService.getStats();
+        
+        // Build tree structure
+        const tree = {
+          id: 'root',
+          title: 'Life Tree',
+          description: 'Your life as a branching timeline',
+          timestamp: new Date().toISOString(),
+          type: 'commit' as const,
+          parentIds: [],
+          children: allBranches.map(branch => ({
+            id: branch.branchId,
+            title: branch.branchName,
+            description: branch.branchSummary,
+            timestamp: branch.branchStart,
+            type: 'branch' as const,
+            branchName: branch.branchName,
+            parentIds: branch.parentBranchId ? [branch.parentBranchId] : [],
+            children: allNodes
+              .filter(node => node.branchId === branch.branchId)
+              .map(node => ({
+                id: node.uuid,
+                title: `Entry ${node.uuid.slice(0, 8)}`,
+                description: node.content,
+                timestamp: node.timeStamp,
+                type: 'commit' as const,
+                parentIds: [branch.branchId],
+                children: [],
+                metadata: {
+                  status: node.isUpdating ? 'active' : 'completed'
+                }
+              })),
+            metadata: {
+              status: branch.branchEnd ? 'completed' : 'active'
+            }
+          }))
+        };
+        
         return NextResponse.json({
-          nodes: allNodes,
-          branches: allBranches
+          success: true,
+          tree,
+          stats: treeStats
         });
     }
   } catch (error) {

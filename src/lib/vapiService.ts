@@ -1,3 +1,4 @@
+
 import { TreeService } from './treeService';
 import { Node, Branch } from '@/types/tree';
 
@@ -166,9 +167,8 @@ export class VapiService {
 
   // Handle function calls from the assistant
   static handleFunctionCall(functionCall: any) {
-    const { name, arguments: args } = functionCall;
-    const parameters = JSON.parse(args);
-
+    const { name, arguments: args } = functionCall.toolCallList[0].function;
+    const parameters = args;
     switch (name) {
       case 'add_node':
         return this.handleAddNode(parameters);
