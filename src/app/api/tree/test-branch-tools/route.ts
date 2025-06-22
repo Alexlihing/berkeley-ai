@@ -3,8 +3,14 @@ import { TreeService } from '@/lib/treeService';
 
 export async function POST() {
   try {
-    // Test 1: Create a test branch
-    const testBranch = TreeService.addBranch('root', 'Test Branch', 'A test branch for testing tools');
+    // Test 1: Create a test branch with specific dates
+    const testBranch = TreeService.addBranch(
+      'root', 
+      'Test Branch', 
+      'A test branch for testing tools',
+      '2023-01-01T00:00:00Z',
+      '2023-12-31T23:59:59Z'
+    );
     
     // Test 2: Update the branch
     const updatedBranch = TreeService.updateBranch(testBranch.branchId, {
