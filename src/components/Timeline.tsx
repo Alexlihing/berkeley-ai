@@ -218,6 +218,7 @@ export default function Timeline() {
   const scaleSecPerPx = useRef<number>(1); // seconds represented by one CSS pixel
   const offsetEpochSec = useRef<number>(0); // UNIX time (seconds) at x = 0
   const offsetY = useRef<number>(0); // vertical offset in pixels
+  const offsetX = useRef<number>(0); // horizontal offset in pixels (for momentum)
 
   // Animation state
   const animationId = useRef<number>(0);
@@ -284,24 +285,32 @@ export default function Timeline() {
       const absVelY = Math.abs(velocityY.current);
 
       if (absVelX > MIN_VELOCITY || absVelY > MIN_VELOCITY) {
-        // Apply momentum - convert horizontal velocity to timeline units per frame
-        const horizontalMovement = velocityX.current * scaleSecPerPx.current;
-        const newOffsetX = offsetEpochSec.current + horizontalMovement;
-        const newOffsetY = offsetY.current + velocityY.current;
-
-        // Constrain horizontal movement with smooth boundary handling
-        const constrainedOffsetX = Math.max(newOffsetX, BIRTH_DATE_EPOCH_SEC);
+        /**
+         * Horizontal momentum ------------------------------------------------
+         * Convert the stored pixel velocity to seconds and apply it directly to
+         * the timeline offset. Stop when birth date reaches the desired position.
+         */
+        const proposedOffset = offsetEpochSec.current - velocityX.current * scaleSecPerPx.current;
         
-        // If we hit the boundary, reduce horizontal velocity to prevent bounce
-        if (constrainedOffsetX !== newOffsetX) {
-          velocityX.current *= 0.2; // Even more dramatic reduction when hitting boundary
+        // Calculate minimum offset so birth date appears at LEFT_PADDING pixels from left edge
+        // birthX = (BIRTH_DATE_EPOCH_SEC - offsetSec) / secPerPx = LEFT_PADDING
+        // So: offsetSec = BIRTH_DATE_EPOCH_SEC - LEFT_PADDING * secPerPx
+        const minOffset = BIRTH_DATE_EPOCH_SEC - LEFT_PADDING * scaleSecPerPx.current;
+        
+        if (proposedOffset < minOffset) {
+          offsetEpochSec.current = minOffset;
+          velocityX.current = 0;
+        } else {
+          offsetEpochSec.current = proposedOffset;
+          velocityX.current *= VELOCITY_DECAY;
         }
-        
-        offsetEpochSec.current = constrainedOffsetX;
-        offsetY.current = newOffsetY; // Vertical has no constraints
 
-        // Decay velocity
-        velocityX.current *= VELOCITY_DECAY;
+        /**
+         * Vertical momentum --------------------------------------------------
+         * Still expressed in pixel units because the vertical axis is screen
+         * based, not time based.
+         */
+        offsetY.current += velocityY.current;
         velocityY.current *= VELOCITY_DECAY;
 
         needsRedraw = true;
@@ -411,12 +420,12 @@ export default function Timeline() {
     const birthX = (BIRTH_DATE_EPOCH_SEC - offsetSec) / secPerPx;
     const todayX = (currentTime - offsetSec) / secPerPx;
 
-    // Calculate left padding when near birth date
-    const leftPadding = birthX >= 0 && birthX <= LEFT_PADDING ? LEFT_PADDING - birthX : 0;
+    // No dynamic padding - keep everything simple
+    const leftPadding = 0;
 
-    // Calculate adjusted positions
-    const adjustedBirthX = birthX + leftPadding;
-    const adjustedTodayX = todayX + leftPadding;
+    // Calculate positions (no adjustment needed)
+    const adjustedBirthX = birthX;
+    const adjustedTodayX = todayX;
 
     // Main horizontal timeline (from birth to today only), with left padding
     ctx.strokeStyle = '#FFFFFF';
@@ -526,6 +535,9 @@ export default function Timeline() {
       lastDragX.current = e.clientX;
       lastDragY.current = e.clientY;
       
+      // Reset pixel offset for new drag
+      offsetX.current = 0;
+      
       // Stop any ongoing animation
       isAnimating.current = false;
       velocityX.current = 0;
@@ -557,12 +569,14 @@ export default function Timeline() {
         velocityY.current = velocityY.current * 0.5 + cappedVelY * 0.5;
       }
       
-      // Horizontal panning
-      const newOffset = dragStartOffset.current - deltaX * scaleSecPerPx.current;
-      offsetEpochSec.current = Math.max(newOffset, BIRTH_DATE_EPOCH_SEC);
-      
-      // Vertical panning
+      // Update pixel-based offsets
+      offsetX.current = -deltaX; // Negative because dragging right should move timeline left
       offsetY.current = dragStartOffsetY.current + deltaY;
+      
+      // Convert pixel offset to timeline offset for drawing
+      const proposedTimelineOffset = dragStartOffset.current + offsetX.current * scaleSecPerPx.current;
+      const minOffset = BIRTH_DATE_EPOCH_SEC - LEFT_PADDING * scaleSecPerPx.current;
+      offsetEpochSec.current = Math.max(proposedTimelineOffset, minOffset);
       
       lastDragTime.current = now;
       lastDragX.current = e.clientX;
@@ -605,7 +619,7 @@ export default function Timeline() {
       const adjustedPointerX = pointerX - leftPadding;
       const timeAtPointer = offsetEpochSec.current + adjustedPointerX * scaleSecPerPx.current;
 
-      const zoomFactor = Math.exp(e.deltaY * 0.008);
+      const zoomFactor = Math.exp(e.deltaY * 0.007);
       const targetScale = Math.min(Math.max(scaleSecPerPx.current * zoomFactor, maxSecPerPx), minSecPerPx);
       const targetOffset = Math.max(timeAtPointer - adjustedPointerX * targetScale, BIRTH_DATE_EPOCH_SEC);
 
