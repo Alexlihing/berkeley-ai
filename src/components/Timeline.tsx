@@ -635,6 +635,7 @@ export default function Timeline() {
   const offsetEpochSec = useRef<number>(0); // UNIX time (seconds) at x = 0
   const offsetY = useRef<number>(0); // vertical offset in pixels
   const offsetX = useRef<number>(0); // horizontal offset in pixels (for momentum)
+  const isInitialized = useRef<boolean>(false); // track if viewport has been initialized
 
   // Animation state
   const animationId = useRef<number>(0);
@@ -782,7 +783,7 @@ export default function Timeline() {
 
   // ───────────────────────── Initialise scale/offset ───────────────────
   useEffect(() => {
-    if (size.width === 0) return;
+    if (size.width === 0 || isInitialized.current) return;
 
     const minSecPerPx = (80 * SECONDS_IN_YEAR) / size.width;   // 80 y per screen
     const maxSecPerPx = (1 * SECONDS_IN_HOUR) / size.width;    // 1 h per screen
@@ -803,9 +804,17 @@ export default function Timeline() {
     // Initialize vertical offset to center
     offsetY.current = 0;
 
+    isInitialized.current = true;
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.width, currentTime]);
+  }, [size.width]);
+
+  // Reset initialization flag when size changes significantly 
+  useEffect(() => {
+    if (size.width > 0) {
+      isInitialized.current = false;
+    }
+  }, [size.width]);
 
   // Cleanup animation on unmount
   useEffect(() => {
