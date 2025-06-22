@@ -90,6 +90,12 @@ export default function Home() {
   const [pulseType, setPulseType] = useState<'start' | 'stop' | null>(null);
   const prevCallActive = useRef<boolean>(isCallActive);
 
+  // Timeline ref
+  const timelineRef = useRef<any>(null);
+
+  // New state for sliding state version
+  const [slidingStateVersion, setSlidingStateVersion] = useState(0);
+
   // Initialize SSE connection
   const initializeSSE = () => {
     console.log('SSE: initializeSSE called, current ref:', eventSourceRef.current);
@@ -496,7 +502,13 @@ export default function Home() {
 
   return (
     <div className="w-screen h-screen overflow-hidden relative">
-      <Timeline nodes={nodes} branches={branches} loading={loadingNodes || loadingBranches} />
+      <Timeline
+        ref={timelineRef}
+        nodes={nodes}
+        branches={branches}
+        loading={loadingNodes || loadingBranches}
+        onSlidingStateChange={() => setSlidingStateVersion(v => v + 1)}
+      />
       
       {/* View Mode Toggle */}
       <div className="absolute top-4 left-4 z-50 hidden">
@@ -783,8 +795,42 @@ export default function Home() {
         </button>
       </div>
 
-      {/* Floating Auto-Fit & Home Buttons */}
+      {/* Floating Auto-Fit, Home, and Play Animation Buttons */}
       <div className="absolute bottom-8 right-4 z-50 flex gap-2">
+        {/* Play Animation */}
+        <button
+          onClick={() => {
+            if (timelineRef.current?.isSliding) {
+              if (timelineRef.current?.isPaused) {
+                timelineRef.current?.resumeSlidingWindow();
+              } else {
+                timelineRef.current?.pauseSlidingWindow();
+              }
+            } else {
+              timelineRef.current?.startSlidingWindow();
+            }
+          }}
+          className="w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all duration-200 bg-transparent text-white hover:bg-white hover:bg-opacity-20 hover:text-black border-white"
+          title={
+            timelineRef.current?.isSliding
+              ? (timelineRef.current?.isPaused ? 'Resume Sliding Window Animation' : 'Pause Sliding Window Animation')
+              : 'Play Sliding Window Animation'
+          }
+          key={slidingStateVersion}
+        >
+          {timelineRef.current?.isSliding && !timelineRef.current?.isPaused ? (
+            // Pause icon
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+              <rect x="5" y="4" width="3" height="12" />
+              <rect x="12" y="4" width="3" height="12" />
+            </svg>
+          ) : (
+            // Play icon
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+              <polygon points="6,4 16,10 6,16" />
+            </svg>
+          )}
+        </button>
         {/* Auto-Fit */}
         <button
           onClick={handleAutoFitSmooth}

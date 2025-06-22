@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
 // Remove the hardcoded data import and add prop interfaces
 // import { nodes, branches, Node, Branch, MAIN_BRANCH } from './timelineData';
 
@@ -30,6 +30,7 @@ interface TimelineProps {
   nodes: Node[];
   branches: Branch[];
   loading?: boolean;
+  onSlidingStateChange?: (isSliding: boolean, isPaused: boolean) => void;
 }
 
 // Time constants
@@ -587,7 +588,7 @@ function drawBirthdayNode(
 // still decluttering crowded areas.
 type BranchSide = 'above' | 'below';
 
-export default function Timeline({ nodes, branches, loading }: TimelineProps) {
+const Timeline = forwardRef(function Timeline({ nodes, branches, loading, onSlidingStateChange }: TimelineProps, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -647,9 +648,15 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
   const lastDragY = useRef<number>(0);
 
   // Add state for sliding window animation
-  const [slidingWindowTime, setSlidingWindowTime] = useState<number | null>(null);
   const [isSliding, setIsSliding] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [slidingWindowTime, setSlidingWindowTime] = useState<number | null>(null);
   const slidingAnimationRef = useRef<number | null>(null);
+  const slidingStartTimeRef = useRef<number | null>(null);
+  const slidingElapsedRef = useRef<number>(0);
+  const slidingStartEpochRef = useRef<number>(0);
+  const slidingEndEpochRef = useRef<number>(0);
+  const slidingDurationRef = useRef<number>(16.0);
 
   // Add refs to save/restore previous zoom/pan
   const prevScaleSecPerPx = useRef<number | null>(null);
@@ -661,11 +668,16 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
   const startSlidingWindow = () => {
     if (!displayBranches || displayBranches.length === 0) return;
     setIsSliding(true);
+    setIsPaused(false);
     const start = getEarliestBranchStart();
     const end = Date.now() / 1000;
-    const duration = 32.0; // seconds for full animation (slower)
-    const animationStart = performance.now();
+    const duration = 16.0; // seconds for full animation (slower)
+    slidingStartEpochRef.current = start;
+    slidingEndEpochRef.current = end;
+    slidingDurationRef.current = duration;
+    slidingElapsedRef.current = 0;
     setSlidingWindowTime(start); // Always set to start value first
+    slidingStartTimeRef.current = performance.now();
 
     // Save previous zoom/pan
     prevScaleSecPerPx.current = scaleSecPerPx.current;
@@ -674,8 +686,8 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
     let running = true;
 
     const animateSliding = (now: number) => {
-      if (!running) return;
-      const elapsed = (now - animationStart) / 1000;
+      if (!running || isPaused) return;
+      const elapsed = slidingElapsedRef.current + (now - (slidingStartTimeRef.current || now)) / 1000;
       const progress = Math.min(1, elapsed / duration);
       const eased = easeInOutCubic(progress);
       const nextTime = start + (end - start) * eased;
@@ -2064,16 +2076,82 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
     return new Date('2023-01-01T00:00:00Z').getTime() / 1000;
   };
 
+  const pauseSlidingWindow = () => {
+    if (!isSliding || isPaused) return;
+    setIsPaused(true);
+    if (slidingAnimationRef.current) cancelAnimationFrame(slidingAnimationRef.current);
+    // Save elapsed time
+    if (slidingStartTimeRef.current) {
+      slidingElapsedRef.current += (performance.now() - slidingStartTimeRef.current) / 1000;
+    }
+  };
+
+  const resumeSlidingWindow = () => {
+    if (!isSliding || !isPaused) return;
+    setIsPaused(false);
+    slidingStartTimeRef.current = performance.now();
+    // Do not start animation here; let useEffect handle it
+  };
+
+  // Animation loop for sliding window
+  const runSlidingAnimation = () => {
+    const duration = slidingDurationRef.current;
+    const start = slidingStartEpochRef.current;
+    const end = slidingEndEpochRef.current;
+    let running = true;
+    const animateSliding = (now: number) => {
+      if (!running || isPaused) return;
+      const elapsed = slidingElapsedRef.current + (now - (slidingStartTimeRef.current || now)) / 1000;
+      const progress = Math.min(1, elapsed / duration);
+      const eased = easeInOutCubic(progress);
+      const nextTime = start + (end - start) * eased;
+      setSlidingWindowTime(progress >= 1 ? null : nextTime);
+      // --- ZOOM & PAN LOGIC ---
+      const secondsIn3Months = 3 * 30 * 24 * 60 * 60; // approx
+      const targetScale = secondsIn3Months / size.width;
+      scaleSecPerPx.current = targetScale;
+      const windowX = size.width * SLIDING_WINDOW_SCREEN_RATIO;
+      offsetEpochSec.current = nextTime - windowX * targetScale;
+      // --- END ZOOM & PAN LOGIC ---
+      if (progress < 1) {
+        slidingAnimationRef.current = requestAnimationFrame(animateSliding);
+      } else {
+        setIsSliding(false);
+        setSlidingWindowTime(null);
+        if (prevScaleSecPerPx.current !== null) scaleSecPerPx.current = prevScaleSecPerPx.current;
+        if (prevOffsetEpochSec.current !== null) offsetEpochSec.current = prevOffsetEpochSec.current;
+        draw();
+      }
+    };
+    if (slidingAnimationRef.current) cancelAnimationFrame(slidingAnimationRef.current);
+    slidingAnimationRef.current = requestAnimationFrame(animateSliding);
+  };
+
+  // Start animation loop when sliding and not paused
+  useEffect(() => {
+    if (isSliding && !isPaused) {
+      runSlidingAnimation();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSliding, isPaused]);
+
+  useImperativeHandle(ref, () => ({
+    startSlidingWindow,
+    pauseSlidingWindow,
+    resumeSlidingWindow,
+    isSliding,
+    isPaused,
+  }));
+
+  useEffect(() => {
+    if (onSlidingStateChange) {
+      onSlidingStateChange(isSliding, isPaused);
+    }
+  }, [isSliding, isPaused]);
+
   return (
     <div ref={containerRef} className="w-full h-full bg-black cursor-grab select-none font-lora relative">
       <canvas ref={canvasRef} />
-      <button
-        className="absolute top-32 left-4 z-60 bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 transition"
-        onClick={startSlidingWindow}
-        disabled={isSliding}
-      >
-        {isSliding ? 'Playing...' : 'Play Animation'}
-      </button>
       
       {/* Loading State */}
       {loading && (
@@ -2101,4 +2179,6 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
       )}
     </div>
   );
-} 
+});
+
+export default Timeline; 
