@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useEffect, useState } from 'react';
-import { nodes, branches, Node, Branch } from './timelineData'; // Example data import
+import { nodes, branches, Node, Branch, MAIN_BRANCH } from './timelineData'; // Example data import
 // Time constants
 const SECONDS_IN_MINUTE = 60;
 const SECONDS_IN_HOUR = 60 * SECONDS_IN_MINUTE;
@@ -586,17 +586,25 @@ export default function Timeline() {
     
     // Calculate branch positions (vertical spacing)
     const branchPositions = new Map<string, number>();
-    let branchIndex = 0;
-    
-    // Assign Y positions to branches
-    branches.forEach(branch => {
-      const branchY = centreY + (branchIndex - Math.floor(branches.length / 2)) * BRANCH_SPACING;
-      branchPositions.set(branch.branchId, branchY);
-      branchIndex++;
+
+    // Place the main "Life" branch so its nodes sit directly on the white baseline
+    branchPositions.set(MAIN_BRANCH, centreY);
+
+    // Distribute all other branches symmetrically around the centre line
+    const otherBranches = branches.filter(b => b.branchId !== MAIN_BRANCH);
+    const middleIdx = Math.floor(otherBranches.length / 2);
+
+    otherBranches.forEach((b, idx) => {
+      const branchY = centreY + (idx - middleIdx) * BRANCH_SPACING;
+      branchPositions.set(b.branchId, branchY);
     });
 
-    // Draw branches
+    // Draw branches (skip the main "Life" branch so its line is invisible)
     branches.forEach(branch => {
+      if (branch.branchId === MAIN_BRANCH) {
+        return; // Don't draw the "Life" branch line; its nodes will still render
+      }
+
       const branchY = branchPositions.get(branch.branchId);
       if (branchY === undefined) return;
 

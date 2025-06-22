@@ -97,4 +97,12 @@ export const nodes: Node[] = [
     content: 'Another significant moment',
     isUpdating: false,
   },
+  // Birthday node on Life branch
+  {
+    uuid: 'birthday-node',
+    branchId: MAIN_BRANCH,
+    timeStamp: '1970-01-01',
+    content: 'Birthday',
+    isUpdating: false,
+  },
 ];
