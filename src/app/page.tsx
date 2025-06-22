@@ -82,6 +82,17 @@ export default function Home() {
   // SSE connection ref
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  // Viewport streaming queue
+  const viewportQueue = useRef<Array<{
+    timestamp: number;
+    y: number;
+    granularity: number;
+    reason: string;
+    zoomLevel: number;
+    animationType: 'node-fade' | 'branch-progressive' | 'default';
+  }>>([]);
+  const isViewportAnimating = useRef(false);
+
   // New state for spacebar hold
   const [isHoldingSpace, setIsHoldingSpace] = useState(false);
   const spaceHoldTimeout = useRef<NodeJS.Timeout | null>(null);
@@ -89,6 +100,152 @@ export default function Home() {
   // Pulse animation trigger when call toggles
   const [pulseType, setPulseType] = useState<'start' | 'stop' | null>(null);
   const prevCallActive = useRef<boolean>(isCallActive);
+
+  // State for animation indicators
+  const [activeAnimation, setActiveAnimation] = useState<{
+    type: 'node-fade' | 'branch-progressive' | 'default';
+    reason: string;
+    progress: number;
+  } | null>(null);
+
+  // Process viewport queue with enhanced animations
+  const processViewportQueue = () => {
+    if (isViewportAnimating.current || viewportQueue.current.length === 0) {
+      // If queue is empty and we're not animating, return to auto-fit
+      if (!isViewportAnimating.current && viewportQueue.current.length === 0) {
+        console.log('Viewport: Queue empty and not animating, returning to auto-fit smooth');
+        setTimeout(() => {
+          handleAutoFitSmooth();
+        }, 500);
+      }
+      return;
+    }
+
+    const viewportData = viewportQueue.current.shift();
+    if (!viewportData) return;
+
+    isViewportAnimating.current = true;
+    setActiveAnimation({
+      type: viewportData.animationType,
+      reason: viewportData.reason,
+      progress: 0
+    });
+    
+    console.log('Viewport: Streaming to', viewportData.reason, viewportData, 'Queue length:', viewportQueue.current.length);
+
+    // Access the global focusViewportToLoc function
+    const w = window as any;
+    if (w.focusViewportToLoc) {
+      // Apply zoom level based on content type
+      const zoomMultiplier = viewportData.zoomLevel || 1.0;
+      const adjustedGranularity = viewportData.granularity * zoomMultiplier;
+      
+      // Center the timeline on the target location
+      w.focusViewportToLoc(viewportData.timestamp, viewportData.y, adjustedGranularity);
+      
+      // Handle different animation types with progress updates
+      if (viewportData.animationType === 'node-fade') {
+        // For nodes, trigger fade-in animation
+        console.log('Viewport: Triggering node fade-in animation');
+        const duration = 1500;
+        const startTime = Date.now();
+        
+        const updateProgress = () => {
+          const elapsed = Date.now() - startTime;
+          const progress = Math.min(1, elapsed / duration);
+          setActiveAnimation(prev => prev ? { ...prev, progress } : null);
+          
+          if (progress < 1) {
+            requestAnimationFrame(updateProgress);
+          } else {
+            setTimeout(() => {
+              isViewportAnimating.current = false;
+              setActiveAnimation(null);
+              console.log('Viewport: Node animation complete, queue length:', viewportQueue.current.length);
+              
+              // Process next item or return to auto-fit
+              setTimeout(() => {
+                processViewportQueue();
+              }, 300);
+            }, 100);
+          }
+        };
+        updateProgress();
+      } else if (viewportData.animationType === 'branch-progressive') {
+        // For branches, trigger progressive reveal animation
+        console.log('Viewport: Triggering branch progressive reveal animation');
+        const duration = 2500;
+        const startTime = Date.now();
+        
+        const updateProgress = () => {
+          const elapsed = Date.now() - startTime;
+          const progress = Math.min(1, elapsed / duration);
+          setActiveAnimation(prev => prev ? { ...prev, progress } : null);
+          
+          if (progress < 1) {
+            requestAnimationFrame(updateProgress);
+          } else {
+            setTimeout(() => {
+              isViewportAnimating.current = false;
+              setActiveAnimation(null);
+              console.log('Viewport: Branch animation complete, queue length:', viewportQueue.current.length);
+              
+              // Process next item or return to auto-fit
+              setTimeout(() => {
+                processViewportQueue();
+              }, 800);
+            }, 100);
+          }
+        };
+        updateProgress();
+      } else {
+        // Default animation
+        const duration = 2000;
+        const startTime = Date.now();
+        
+        const updateProgress = () => {
+          const elapsed = Date.now() - startTime;
+          const progress = Math.min(1, elapsed / duration);
+          setActiveAnimation(prev => prev ? { ...prev, progress } : null);
+          
+          if (progress < 1) {
+            requestAnimationFrame(updateProgress);
+          } else {
+            setTimeout(() => {
+              isViewportAnimating.current = false;
+              setActiveAnimation(null);
+              console.log('Viewport: Default animation complete, queue length:', viewportQueue.current.length);
+              
+              // Process next item or return to auto-fit
+              setTimeout(() => {
+                processViewportQueue();
+              }, 500);
+            }, 100);
+          }
+        };
+        updateProgress();
+      }
+    } else {
+      console.warn('Viewport: focusViewportToLoc not available');
+      isViewportAnimating.current = false;
+      setActiveAnimation(null);
+      setTimeout(processViewportQueue, 100);
+    }
+  };
+
+  // Add viewport transition to queue with enhanced data
+  const queueViewportTransition = (viewportData: {
+    timestamp: number;
+    y: number;
+    granularity: number;
+    reason: string;
+    zoomLevel: number;
+    animationType: 'node-fade' | 'branch-progressive' | 'default';
+  }) => {
+    console.log('Viewport: Queuing transition for', viewportData.reason, 'with animation:', viewportData.animationType);
+    viewportQueue.current.push(viewportData);
+    processViewportQueue();
+  };
 
   // Initialize SSE connection
   const initializeSSE = () => {
@@ -132,7 +289,7 @@ export default function Home() {
         } else if (data.type === 'heartbeat') {
           // Heartbeat message - just log it
           console.log('SSE: Heartbeat received:', data.timestamp);
-      } else {
+        } else {
           // Real-time updates
           console.log('SSE: Processing update:', data.type);
           setNodes(data.allNodes);
@@ -142,6 +299,12 @@ export default function Home() {
           // Update tree structure
           const updatedTree = buildTreeStructure(data.allBranches, data.allNodes);
           setTree(updatedTree);
+          
+          // Handle viewport streaming for new content
+          if (data.viewport) {
+            console.log('SSE: Received viewport data for streaming:', data.viewport);
+            queueViewportTransition(data.viewport);
+          }
         }
       } catch (error) {
         console.error('SSE: Error parsing data:', error);
@@ -807,6 +970,40 @@ export default function Home() {
           </svg>
         </button>
       </div>
+
+      {/* Animation Status Indicator */}
+      {activeAnimation && (
+        <div className="absolute top-4 right-4 z-50 bg-black bg-opacity-80 text-white p-4 rounded-lg shadow-lg max-w-sm">
+          <div className="flex items-center gap-3 mb-2">
+            <div className={`w-3 h-3 rounded-full ${
+              activeAnimation.type === 'node-fade' ? 'bg-blue-400' :
+              activeAnimation.type === 'branch-progressive' ? 'bg-green-400' :
+              'bg-purple-400'
+            } animate-pulse`}></div>
+            <span className="text-sm font-medium">
+              {activeAnimation.type === 'node-fade' ? 'Node Fade-In' :
+               activeAnimation.type === 'branch-progressive' ? 'Branch Progressive Reveal' :
+               'Viewport Transition'}
+            </span>
+          </div>
+          <div className="text-xs text-gray-300 mb-2">
+            {activeAnimation.reason}
+          </div>
+          <div className="w-full bg-gray-700 rounded-full h-2">
+            <div 
+              className={`h-2 rounded-full transition-all duration-100 ${
+                activeAnimation.type === 'node-fade' ? 'bg-blue-400' :
+                activeAnimation.type === 'branch-progressive' ? 'bg-green-400' :
+                'bg-purple-400'
+              }`}
+              style={{ width: `${activeAnimation.progress * 100}%` }}
+            ></div>
+          </div>
+          <div className="text-xs text-gray-400 mt-1">
+            {Math.round(activeAnimation.progress * 100)}% complete
+          </div>
+        </div>
+      )}
     </div>
   );
 }

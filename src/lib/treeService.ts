@@ -15,6 +15,14 @@ type UpdateCallback = (update: {
   allNodes: Node[];
   allBranches: Branch[];
   stats: any;
+  viewport?: {
+    timestamp: number;
+    y: number;
+    granularity: number;
+    reason: string;
+    zoomLevel: number;
+    animationType: 'node-fade' | 'branch-progressive' | 'default';
+  };
 }) => void;
 
 // Use global storage to prevent reset on module reload
@@ -27,27 +35,35 @@ const getSubscribers = (): UpdateCallback[] => {
 };
 
 const notifySubscribers = (updateType: UpdateType, data: any) => {
-  const subscribers = getSubscribers();
-  console.log(`TreeService: Notifying ${subscribers.length} subscribers of ${updateType} update`);
-  console.log(`TreeService: Subscribers array:`, subscribers.map((_, index) => `subscriber_${index}`));
+  const allNodes = nodes;
+  const allBranches = branches;
+  const stats = TreeService.getStats();
+  
+  // Calculate viewport position for streaming edits
+  let viewport = undefined;
+  
+  if (updateType === 'node_added' || updateType === 'branch_added') {
+    viewport = TreeService.calculateViewportForNewContent(data);
+  }
   
   const update = {
     type: updateType,
     data,
-    allNodes: nodes,
-    allBranches: branches,
-    stats: TreeService.getStats()
+    allNodes,
+    allBranches,
+    stats,
+    viewport: viewport ? {
+      timestamp: viewport.timestamp,
+      y: viewport.y,
+      granularity: viewport.granularity,
+      reason: viewport.reason,
+      zoomLevel: viewport.zoomLevel,
+      animationType: viewport.animationType
+    } : undefined
   };
   
-  subscribers.forEach((callback, index) => {
-    console.log(`TreeService: Calling subscriber ${index}`);
-    try {
-      callback(update);
-      console.log(`TreeService: Successfully called subscriber ${index}`);
-    } catch (error) {
-      console.error(`TreeService: Error calling subscriber ${index}:`, error);
-    }
-  });
+  console.log(`TreeService: Notifying ${getSubscribers().length} subscribers of ${updateType} with viewport:`, viewport);
+  getSubscribers().forEach(callback => callback(update));
 };
 
 const branches: Branch[] = []
@@ -282,6 +298,58 @@ export class TreeService {
       name: branch.branchName,
       id: branch.branchId
     }));
+  }
+
+  // Calculate optimal viewport position for new content
+  static calculateViewportForNewContent(data: any): {
+    timestamp: number;
+    y: number;
+    granularity: number;
+    reason: string;
+    zoomLevel: number;
+    animationType: 'node-fade' | 'branch-progressive' | 'default';
+  } | undefined {
+    try {
+      if (data instanceof Node) {
+        // For new nodes, focus on the node's timestamp with close zoom
+        const nodeTimestamp = new Date(data.timeStamp).getTime() / 1000;
+        const branch = this.findBranchById(data.branchId);
+        const branchY = branch ? this.calculateBranchYPosition(branch) : 0;
+        
+        return {
+          timestamp: nodeTimestamp,
+          y: branchY,
+          granularity: 2 * 60 * 60, // 2 hour granularity for close node view
+          reason: `New node added: ${data.content.substring(0, 50)}...`,
+          zoomLevel: 0.1, // Close zoom for nodes
+          animationType: 'node-fade'
+        };
+      } else if (data instanceof Branch) {
+        // For new branches, focus on the branch start time with medium zoom
+        const branchStartTimestamp = new Date(data.branchStart).getTime() / 1000;
+        const branchY = this.calculateBranchYPosition(data);
+        
+        return {
+          timestamp: branchStartTimestamp,
+          y: branchY,
+          granularity: 24 * 60 * 60, // 1 day granularity for branches
+          reason: `New branch created: ${data.branchName}`,
+          zoomLevel: 0.5, // Medium zoom for branches
+          animationType: 'branch-progressive'
+        };
+      }
+    } catch (error) {
+      console.error('Error calculating viewport for new content:', error);
+    }
+    
+    return undefined;
+  }
+
+  // Calculate Y position for a branch (simplified - in real implementation this would be more complex)
+  private static calculateBranchYPosition(branch: Branch): number {
+    // Simple calculation based on branch index
+    const branchIndex = branches.findIndex(b => b.branchId === branch.branchId);
+    return branchIndex * 60; // 60px spacing between branches
   }
 
   // Get child branches of a parent branch

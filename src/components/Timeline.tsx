@@ -583,13 +583,52 @@ type BranchSide = 'above' | 'below';
 export default function Timeline({ nodes, branches, loading }: TimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationRef = useRef<number>();
+  const lastTimeRef = useRef<number>(0);
+  const velocityRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const isDraggingRef = useRef<boolean>(false);
+  const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const lastMousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const tooltipRef = useRef<{ x: number; y: number; text: string; visible: boolean }>({
+    x: 0,
+    y: 0,
+    text: '',
+    visible: false
+  });
+
+  // Animation state for fade-in and progressive reveal effects
+  const animationStateRef = useRef<{
+    fadeInNodes: Map<string, { startTime: number; duration: number; progress: number }>;
+    progressiveBranches: Map<string, { startTime: number; duration: number; progress: number; revealProgress: number }>;
+    lastNodeCount: number;
+    lastBranchCount: number;
+  }>({
+    fadeInNodes: new Map(),
+    progressiveBranches: new Map(),
+    lastNodeCount: 0,
+    lastBranchCount: 0
+  });
+
+  // State for current viewport and time
+  const [currentTime, setCurrentTime] = useState<number>(Date.now() / 1000);
+  const [viewport, setViewport] = useState<{
+    x: number;
+    y: number;
+    scale: number;
+  }>({
+    x: 0,
+    y: 0,
+    scale: 1
+  });
+
+  // Persist data to avoid re-renders
+  const persistedNodes = useRef<Node[]>(nodes);
+  const persistedBranches = useRef<Branch[]>(branches);
+  const lastDataUpdate = useRef<number>(0);
 
   // Canvas (CSS) pixel dimensions
   const [size, setSize] = useState({ width: 0, height: 0 });
   
-  // Current time state (updated every minute)
-  const [currentTime, setCurrentTime] = useState(() => Date.now() / 1000);
-
   // Tooltip state
   const [tooltip, setTooltip] = useState<{
     x: number;
@@ -597,11 +636,6 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
     content: string;
     type: 'branch' | 'node';
   } | null>(null);
-
-  // Persist data in refs to avoid re-renders during zoom/pan
-  const persistedNodes = useRef<Node[]>([]);
-  const persistedBranches = useRef<Branch[]>([]);
-  const lastDataUpdate = useRef<number>(0);
 
   // State kept in refs to avoid re-render loops while panning/zooming
   const scaleSecPerPx = useRef<number>(1); // seconds represented by one CSS pixel
@@ -612,8 +646,6 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
 
   // Animation state
   const animationId = useRef<number>(0);
-  const velocityX = useRef<number>(0);
-  const velocityY = useRef<number>(0);
   const isAnimating = useRef<boolean>(false);
 
   // Generic animation state for any smooth zoom/pan operation (mouse-wheel or programmatic)
@@ -630,19 +662,19 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
     duration?: number; // custom duration per animation
   } | null>(null);
 
-  const isDragging = useRef(false);
-  const dragStartX = useRef(0);
-  const dragStartY = useRef(0);
-  const dragStartOffset = useRef(0);
-  const dragStartOffsetY = useRef(0);
-  const lastDragTime = useRef<number>(0);
-  const lastDragX = useRef<number>(0);
-  const lastDragY = useRef<number>(0);
-
   // Add state for sliding window animation
   const [slidingWindowTime, setSlidingWindowTime] = useState<number | null>(null);
   const [isSliding, setIsSliding] = useState(false);
   const slidingAnimationRef = useRef<number | null>(null);
+
+  // Drag state variables
+  const dragStartOffset = useRef<number>(0);
+  const dragStartOffsetY = useRef<number>(0);
+  const lastDragTime = useRef<number>(0);
+  const lastDragX = useRef<number>(0);
+  const lastDragY = useRef<number>(0);
+  const velocityX = useRef<number>(0);
+  const velocityY = useRef<number>(0);
 
   // Helper to get the earliest branch start (hardcoded for testing)
   const getEarliestBranchStart = () => {
@@ -652,7 +684,7 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
 
   // Handler to start the sliding window animation
   const startSlidingWindow = () => {
-    if (!displayBranches || displayBranches.length === 0) return;
+    if (!getCurrentBranches() || getCurrentBranches().length === 0) return;
     setIsSliding(true);
     const start = getEarliestBranchStart();
     const end = Date.now() / 1000;
@@ -861,9 +893,9 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
     }
 
     // Handle momentum animation
-    if (isAnimating.current && !isDragging.current) {
-      const absVelX = Math.abs(velocityX.current);
-      const absVelY = Math.abs(velocityY.current);
+    if (isAnimating.current && !isDraggingRef.current) {
+      const absVelX = Math.abs(velocityRef.current.x);
+      const absVelY = Math.abs(velocityRef.current.y);
 
       if (absVelX > MIN_VELOCITY || absVelY > MIN_VELOCITY) {
         /**
@@ -871,7 +903,7 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
          * Convert the stored pixel velocity to seconds and apply it directly to
          * the timeline offset. Stop when birth date reaches the desired position.
          */
-        const proposedOffset = offsetEpochSec.current - velocityX.current * scaleSecPerPx.current;
+        const proposedOffset = offsetEpochSec.current - velocityRef.current.x * scaleSecPerPx.current;
         
         // Calculate minimum offset so birth date appears at LEFT_PADDING pixels from left edge
         // birthX = (BIRTH_DATE_EPOCH_SEC - offsetSec) / secPerPx = LEFT_PADDING
@@ -880,10 +912,10 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
         
         if (proposedOffset < minOffset) {
           offsetEpochSec.current = minOffset;
-          velocityX.current = 0;
+          velocityRef.current.x = 0;
         } else {
           offsetEpochSec.current = proposedOffset;
-          velocityX.current *= VELOCITY_DECAY;
+          velocityRef.current.x *= VELOCITY_DECAY;
         }
 
         /**
@@ -891,14 +923,14 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
          * Still expressed in pixel units because the vertical axis is screen
          * based, not time based.
          */
-        offsetY.current += velocityY.current;
-        velocityY.current *= VELOCITY_DECAY;
+        offsetY.current += velocityRef.current.y;
+        velocityRef.current.y *= VELOCITY_DECAY;
 
         needsRedraw = true;
       } else {
         isAnimating.current = false;
-        velocityX.current = 0;
-        velocityY.current = 0;
+        velocityRef.current.x = 0;
+        velocityRef.current.y = 0;
       }
     }
 
@@ -1000,7 +1032,7 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
     console.log('Draw function called with:', { 
       nodesCount: currentNodes.length, 
       branchesCount: currentBranches.length,
-      isDragging: isDragging.current,
+      isDragging: isDraggingRef.current,
       isAnimating: isAnimating.current
     });
 
@@ -1530,9 +1562,9 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
     const maxSecPerPx = (1 * SECONDS_IN_HOUR) / size.width;
 
     const onMouseDown = (e: MouseEvent) => {
-      isDragging.current = true;
-      dragStartX.current = e.clientX;
-      dragStartY.current = e.clientY;
+      isDraggingRef.current = true;
+      dragStartRef.current.x = e.clientX;
+      dragStartRef.current.y = e.clientY;
       dragStartOffset.current = offsetEpochSec.current;
       dragStartOffsetY.current = offsetY.current;
       lastDragTime.current = Date.now();
@@ -1544,19 +1576,19 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
       
       // Stop any ongoing animation
       isAnimating.current = false;
-      velocityX.current = 0;
-      velocityY.current = 0;
+      velocityRef.current.x = 0;
+      velocityRef.current.y = 0;
       
       container.classList.add('cursor-grabbing');
     };
 
     const onMouseMove = (e: MouseEvent) => {
-      if (!isDragging.current) return;
+      if (!isDraggingRef.current) return;
       
       const now = Date.now();
       const deltaTime = now - lastDragTime.current;
-      const deltaX = e.clientX - dragStartX.current;
-      const deltaY = e.clientY - dragStartY.current;
+      const deltaX = e.clientX - dragStartRef.current.x;
+      const deltaY = e.clientY - dragStartRef.current.y;
       
       // Calculate velocity for momentum - make it more responsive to drag speed
       if (deltaTime > 0 && deltaTime < 50) { // Only calculate velocity for recent movements
@@ -1569,8 +1601,8 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
         const cappedVelY = Math.max(-maxVel, Math.min(maxVel, currentVelY));
         
         // More responsive velocity tracking (less smoothing)
-        velocityX.current = velocityX.current * 0.5 + cappedVelX * 0.5;
-        velocityY.current = velocityY.current * 0.5 + cappedVelY * 0.5;
+        velocityRef.current.x = velocityRef.current.x * 0.5 + cappedVelX * 0.5;
+        velocityRef.current.y = velocityRef.current.y * 0.5 + cappedVelY * 0.5;
       }
       
       // Update pixel-based offsets
@@ -1591,7 +1623,7 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
 
     // Tooltip detection
     const onMouseMoveForTooltip = (e: MouseEvent) => {
-      if (isDragging.current) return;
+      if (isDraggingRef.current) return;
       
       const rect = container.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
@@ -1735,8 +1767,8 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
     };
 
     const endDrag = () => {
-      if (isDragging.current) {
-        isDragging.current = false;
+      if (isDraggingRef.current) {
+        isDraggingRef.current = false;
         container.classList.remove('cursor-grabbing');
         
         // Keep both horizontal and vertical in pixel units for consistency

@@ -1,36 +1,207 @@
 @import "tailwindcss";
-
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+    --background: #ffffff;
+    --foreground: #171717;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-lora: var(--font-lora);
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --font-sans: var(--font-geist-sans);
+    --font-mono: var(--font-geist-mono);
+    --font-lora: var(--font-lora);
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+     :root {
+        --background: #0a0a0a;
+        --foreground: #ededed;
+    }
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+    background: var(--background);
+    color: var(--foreground);
 }
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Enhanced viewport streaming animations */
+
+
+/* Node fade-in animation */
+
+@keyframes nodeFadeIn {
+    0% {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+    50% {
+        opacity: 0.7;
+        transform: scale(1.1);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.node-fade-in {
+    animation: nodeFadeIn 1.5s ease-out forwards;
+}
+
+
+/* Branch progressive reveal animation */
+
+@keyframes branchProgressiveReveal {
+    0% {
+        opacity: 0;
+        stroke-dasharray: 0 1000;
+        stroke-dashoffset: 1000;
+    }
+    30% {
+        opacity: 0.3;
+        stroke-dasharray: 0 1000;
+        stroke-dashoffset: 700;
+    }
+    70% {
+        opacity: 0.7;
+        stroke-dasharray: 0 1000;
+        stroke-dashoffset: 300;
+    }
+    100% {
+        opacity: 1;
+        stroke-dasharray: 0 1000;
+        stroke-dashoffset: 0;
+    }
+}
+
+.branch-progressive-reveal {
+    animation: branchProgressiveReveal 2.5s ease-in-out forwards;
+}
+
+
+/* Zoom transition animation */
+
+@keyframes smoothZoom {
+    0% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.05);
+    }
+    100% {
+        transform: scale(1);
+    }
+}
+
+.smooth-zoom {
+    animation: smoothZoom 2s ease-in-out;
+}
+
+
+/* Viewport transition indicator */
+
+@keyframes viewportPulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(59, 130, 246, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+    }
+}
+
+.viewport-pulse {
+    animation: viewportPulse 2s infinite;
+}
+
+
+/* Enhanced timeline animations */
+
+.timeline-node {
+    transition: all 0.3s ease;
+}
+
+.timeline-node:hover {
+    transform: scale(1.1);
+    filter: brightness(1.2);
+}
+
+.timeline-branch {
+    transition: all 0.3s ease;
+}
+
+.timeline-branch:hover {
+    stroke-width: 3px;
+    filter: brightness(1.1);
+}
+
+
+/* Loading states for streaming */
+
+.streaming-loading {
+    position: relative;
+    overflow: hidden;
+}
+
+.streaming-loading::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    animation: streamingShimmer 2s infinite;
+}
+
+@keyframes streamingShimmer {
+    0% {
+        left: -100%;
+    }
+    100% {
+        left: 100%;
+    }
+}
+
+
+/* Animation classes for different content types */
+
+.content-node {
+    animation: nodeFadeIn 1.5s ease-out forwards;
+}
+
+.content-branch {
+    animation: branchProgressiveReveal 2.5s ease-in-out forwards;
+}
+
+.content-zoom {
+    animation: smoothZoom 2s ease-in-out;
+}
+
+
+/* Responsive animations */
+
+@media (prefers-reduced-motion: reduce) {
+    .node-fade-in,
+    .branch-progressive-reveal,
+    .smooth-zoom,
+    .viewport-pulse,
+    .content-node,
+    .content-branch,
+    .content-zoom {
+        animation: none;
+        transition: none;
+    }
+}
+
 @layer base {
-  .font-lora {
-    font-family: var(--font-lora), 'Lora', serif;
-  }
+    .font-lora {
+        font-family: var(--font-lora), 'Lora', serif;
+    }
 }
