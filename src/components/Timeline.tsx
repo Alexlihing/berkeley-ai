@@ -444,8 +444,10 @@ export default function Timeline() {
     // Clamp to zoom limits
     scaleSecPerPx.current = Math.max(Math.min(scaleSecPerPx.current, minSecPerPx), maxSecPerPx);
 
-    // Position birth date at left edge of screen
-    offsetEpochSec.current = BIRTH_DATE_EPOCH_SEC;
+    // Position birth date at LEFT_PADDING pixels from left edge (same logic as momentum animation)
+    // birthX = (BIRTH_DATE_EPOCH_SEC - offsetSec) / secPerPx = LEFT_PADDING
+    // So: offsetSec = BIRTH_DATE_EPOCH_SEC - LEFT_PADDING * secPerPx
+    offsetEpochSec.current = BIRTH_DATE_EPOCH_SEC - LEFT_PADDING * scaleSecPerPx.current;
 
     // Initialize vertical offset to center
     offsetY.current = 0;
@@ -896,7 +898,7 @@ export default function Timeline() {
 
       const zoomFactor = Math.exp(e.deltaY * 0.007);
       const targetScale = Math.min(Math.max(scaleSecPerPx.current * zoomFactor, maxSecPerPx), minSecPerPx);
-      const targetOffset = Math.max(timeAtPointer - adjustedPointerX * targetScale, BIRTH_DATE_EPOCH_SEC);
+      const targetOffset = Math.max(timeAtPointer - adjustedPointerX * targetScale, BIRTH_DATE_EPOCH_SEC - LEFT_PADDING * targetScale);
 
       // For now, let's use immediate zoom to test if the issue is with animation
       if (Math.abs(targetScale - scaleSecPerPx.current) < 0.001) {

@@ -30,7 +30,7 @@ export const branches: Branch[] = [
   {
     parentBranchId: null,
     branchId: MAIN_BRANCH,
-    branchStart: '2000-01-01',
+    branchStart: '1970-01-01',
     branchEnd: null,
     branchName: 'Life',
     branchSummary: 'The main timeline of your life.',
