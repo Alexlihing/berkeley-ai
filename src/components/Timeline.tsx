@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
 // Remove the hardcoded data import and add prop interfaces
 // import { nodes, branches, Node, Branch, MAIN_BRANCH } from './timelineData';
 
@@ -30,6 +30,7 @@ interface TimelineProps {
   nodes: Node[];
   branches: Branch[];
   loading?: boolean;
+  onSlidingStateChange?: (isSliding: boolean, isPaused: boolean) => void;
 }
 
 // Time constants
@@ -186,6 +187,13 @@ function easeOutCubic(t: number): number {
 // Ease-in-out cubic (symmetric)
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+// Custom blend for a snappier start
+function customEasing(t: number): number {
+  const easeInOut = easeInOutCubic(t);
+  const easeOut = easeOutCubic(t);
+  return 0.7 * easeInOut + 0.3 * easeOut;
 }
 
 /**
@@ -580,7 +588,7 @@ function drawBirthdayNode(
 // still decluttering crowded areas.
 type BranchSide = 'above' | 'below';
 
-export default function Timeline({ nodes, branches, loading }: TimelineProps) {
+const Timeline = forwardRef(function Timeline({ nodes, branches, loading, onSlidingStateChange }: TimelineProps, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>();
@@ -663,9 +671,15 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
   } | null>(null);
 
   // Add state for sliding window animation
-  const [slidingWindowTime, setSlidingWindowTime] = useState<number | null>(null);
   const [isSliding, setIsSliding] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [slidingWindowTime, setSlidingWindowTime] = useState<number | null>(null);
   const slidingAnimationRef = useRef<number | null>(null);
+  const slidingStartTimeRef = useRef<number | null>(null);
+  const slidingElapsedRef = useRef<number>(0);
+  const slidingStartEpochRef = useRef<number>(0);
+  const slidingEndEpochRef = useRef<number>(0);
+  const slidingDurationRef = useRef<number>(16.0);
 
   // Drag state variables
   const dragStartOffset = useRef<number>(0);
@@ -681,31 +695,60 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
     // Hardcoded to 1 Jan 2023 UTC
     return new Date('2023-01-01T00:00:00Z').getTime() / 1000;
   };
+  // Add refs to save/restore previous zoom/pan
+  const prevScaleSecPerPx = useRef<number | null>(null);
+  const prevOffsetEpochSec = useRef<number | null>(null);
 
-  // Handler to start the sliding window animation
+  const SLIDING_WINDOW_SCREEN_RATIO = 0.7; // 70% of canvas width
+  const SLIDING_WINDOW_MONTHS = 3; // Show 3 months across the screen
+
   const startSlidingWindow = () => {
     if (!getCurrentBranches() || getCurrentBranches().length === 0) return;
     setIsSliding(true);
+    setIsPaused(false);
     const start = getEarliestBranchStart();
     const end = Date.now() / 1000;
-    const duration = 10.0; // seconds for full animation (slower)
-    const animationStart = performance.now();
+    const duration = 16.0; // seconds for full animation (slower)
+    slidingStartEpochRef.current = start;
+    slidingEndEpochRef.current = end;
+    slidingDurationRef.current = duration;
+    slidingElapsedRef.current = 0;
     setSlidingWindowTime(start); // Always set to start value first
+    slidingStartTimeRef.current = performance.now();
+
+    // Save previous zoom/pan
+    prevScaleSecPerPx.current = scaleSecPerPx.current;
+    prevOffsetEpochSec.current = offsetEpochSec.current;
 
     let running = true;
 
     const animateSliding = (now: number) => {
-      if (!running) return;
-      const elapsed = (now - animationStart) / 1000;
+      if (!running || isPaused) return;
+      const elapsed = slidingElapsedRef.current + (now - (slidingStartTimeRef.current || now)) / 1000;
       const progress = Math.min(1, elapsed / duration);
       const eased = easeInOutCubic(progress);
       const nextTime = start + (end - start) * eased;
       setSlidingWindowTime(progress >= 1 ? null : nextTime);
+
+      // --- ZOOM & PAN LOGIC ---
+      // Set zoom to show 3 months across the screen
+      const secondsIn3Months = 3 * 30 * 24 * 60 * 60; // approx
+      const targetScale = secondsIn3Months / size.width;
+      scaleSecPerPx.current = targetScale;
+      // Pan so the sliding window's right edge is at 70% of the canvas width
+      const windowX = size.width * SLIDING_WINDOW_SCREEN_RATIO;
+      offsetEpochSec.current = nextTime - windowX * targetScale;
+      // --- END ZOOM & PAN LOGIC ---
+
       if (progress < 1) {
         slidingAnimationRef.current = requestAnimationFrame(animateSliding);
       } else {
         setIsSliding(false);
         setSlidingWindowTime(null);
+        // Restore previous zoom/pan
+        if (prevScaleSecPerPx.current !== null) scaleSecPerPx.current = prevScaleSecPerPx.current;
+        if (prevOffsetEpochSec.current !== null) offsetEpochSec.current = prevOffsetEpochSec.current;
+        draw();
       }
     };
     if (slidingAnimationRef.current) cancelAnimationFrame(slidingAnimationRef.current);
@@ -1516,13 +1559,35 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
     }
 
     // (at the end of the draw function, after all timeline drawing)
+    // Only mask the timeline content area, not the tick labels at the top
     if (slidingWindowTime !== null) {
       const windowX = (slidingWindowTime - offsetEpochSec.current) / scaleSecPerPx.current;
       ctx.save();
       ctx.globalAlpha = 1;
       ctx.fillStyle = '#000';
-      ctx.fillRect(windowX, 0, size.width - windowX, size.height);
+      // Mask only below the tick labels (assume tick labels occupy top 60px)
+      ctx.fillRect(windowX, 60, size.width - windowX, size.height - 60);
       ctx.restore();
+
+      // Draw gray vertical tick lines again so they are always visible
+      const drawGrayTicks = (step: number) => {
+        const ticks = generateTicks(offsetEpochSec.current - step * 2, offsetEpochSec.current + scaleSecPerPx.current * size.width + step * 2, step);
+        ctx.globalAlpha = 1;
+        for (const t of ticks) {
+          const x = (t - offsetEpochSec.current) / scaleSecPerPx.current;
+          if (x < -50 || x > size.width + 50) continue;
+          if (t >= BIRTH_DATE_EPOCH_SEC) {
+            ctx.strokeStyle = '#444444';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, size.height);
+            ctx.stroke();
+          }
+        }
+      };
+      drawGrayTicks(coarseStep);
+      if (fineStep !== null) drawGrayTicks(fineStep);
     }
   };
 
@@ -2042,16 +2107,88 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
   // Add todayLabelY ref for animated label position
   const todayLabelY = useRef<number>(25);
 
+  // Helper to get the earliest branch start (hardcoded for testing)
+  const getEarliestBranchStart = () => {
+    // Hardcoded to 1 Jan 2023 UTC
+    return new Date('2023-01-01T00:00:00Z').getTime() / 1000;
+  };
+
+  const pauseSlidingWindow = () => {
+    if (!isSliding || isPaused) return;
+    setIsPaused(true);
+    if (slidingAnimationRef.current) cancelAnimationFrame(slidingAnimationRef.current);
+    // Save elapsed time
+    if (slidingStartTimeRef.current) {
+      slidingElapsedRef.current += (performance.now() - slidingStartTimeRef.current) / 1000;
+    }
+  };
+
+  const resumeSlidingWindow = () => {
+    if (!isSliding || !isPaused) return;
+    setIsPaused(false);
+    slidingStartTimeRef.current = performance.now();
+    // Do not start animation here; let useEffect handle it
+  };
+
+  // Animation loop for sliding window
+  const runSlidingAnimation = () => {
+    const duration = slidingDurationRef.current;
+    const start = slidingStartEpochRef.current;
+    const end = slidingEndEpochRef.current;
+    let running = true;
+    const animateSliding = (now: number) => {
+      if (!running || isPaused) return;
+      const elapsed = slidingElapsedRef.current + (now - (slidingStartTimeRef.current || now)) / 1000;
+      const progress = Math.min(1, elapsed / duration);
+      const eased = easeInOutCubic(progress);
+      const nextTime = start + (end - start) * eased;
+      setSlidingWindowTime(progress >= 1 ? null : nextTime);
+      // --- ZOOM & PAN LOGIC ---
+      const secondsIn3Months = 3 * 30 * 24 * 60 * 60; // approx
+      const targetScale = secondsIn3Months / size.width;
+      scaleSecPerPx.current = targetScale;
+      const windowX = size.width * SLIDING_WINDOW_SCREEN_RATIO;
+      offsetEpochSec.current = nextTime - windowX * targetScale;
+      // --- END ZOOM & PAN LOGIC ---
+      if (progress < 1) {
+        slidingAnimationRef.current = requestAnimationFrame(animateSliding);
+      } else {
+        setIsSliding(false);
+        setSlidingWindowTime(null);
+        if (prevScaleSecPerPx.current !== null) scaleSecPerPx.current = prevScaleSecPerPx.current;
+        if (prevOffsetEpochSec.current !== null) offsetEpochSec.current = prevOffsetEpochSec.current;
+        draw();
+      }
+    };
+    if (slidingAnimationRef.current) cancelAnimationFrame(slidingAnimationRef.current);
+    slidingAnimationRef.current = requestAnimationFrame(animateSliding);
+  };
+
+  // Start animation loop when sliding and not paused
+  useEffect(() => {
+    if (isSliding && !isPaused) {
+      runSlidingAnimation();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSliding, isPaused]);
+
+  useImperativeHandle(ref, () => ({
+    startSlidingWindow,
+    pauseSlidingWindow,
+    resumeSlidingWindow,
+    isSliding,
+    isPaused,
+  }));
+
+  useEffect(() => {
+    if (onSlidingStateChange) {
+      onSlidingStateChange(isSliding, isPaused);
+    }
+  }, [isSliding, isPaused]);
+
   return (
     <div ref={containerRef} className="w-full h-full bg-black cursor-grab select-none font-lora relative">
       <canvas ref={canvasRef} />
-      <button
-        className="absolute top-32 left-4 z-60 bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 transition"
-        onClick={startSlidingWindow}
-        disabled={isSliding}
-      >
-        {isSliding ? 'Playing...' : 'Play Sliding Window'}
-      </button>
       
       {/* Loading State */}
       {loading && (
@@ -2079,4 +2216,6 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
       )}
     </div>
   );
-} 
+});
+
+export default Timeline; 
