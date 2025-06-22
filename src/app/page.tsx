@@ -421,9 +421,9 @@ const OngoingArrow: React.FC<{
   x: number;
   y: number;
   color: string;
-}> = ({ x, y, color }) => {
-  const arrowSize = 12;
-  
+  strokeWidth: number;
+  arrowSize: number;
+}> = ({ x, y, color, strokeWidth, arrowSize }) => {
   return (
     <g className="ongoing-arrow">
       {/* Arrow line */}
@@ -433,11 +433,13 @@ const OngoingArrow: React.FC<{
         x2={x}
         y2={y}
         stroke={color}
-        strokeWidth={3}
+        strokeWidth={strokeWidth}
       />
       {/* Arrow head */}
       <polygon
-        points={`${x},${y - arrowSize/2} ${x + arrowSize},${y} ${x},${y + arrowSize/2}`}
+        points={`${x},${y - arrowSize / 2} ${x + arrowSize},${y} ${x},${
+          y + arrowSize / 2
+        }`}
         fill={color}
       />
     </g>
@@ -521,6 +523,7 @@ const Timeline: React.FC = () => {
 
     const branchLineColor = color;
     const branchLineWidth = isMainBranch ? 8 : 4;
+    const arrowSize = isMainBranch ? 16 : 12;
 
     return (
       <g key={branch.branchId}>
@@ -528,7 +531,7 @@ const Timeline: React.FC = () => {
         <line
           x1={startX}
           y1={y}
-          x2={endX}
+          x2={isOngoing ? endX - arrowSize : endX}
           y2={y}
           stroke={branchLineColor}
           strokeWidth={branchLineWidth}
@@ -607,7 +610,13 @@ const Timeline: React.FC = () => {
         
         {/* End node or ongoing arrow */}
         {isOngoing ? (
-          <OngoingArrow x={endX} y={isMainBranch ? y : parentY} color={color} />
+          <OngoingArrow
+            x={endX}
+            y={y}
+            color={color}
+            strokeWidth={branchLineWidth}
+            arrowSize={arrowSize}
+          />
         ) : (
           <g className="branch-endpoint">
             <circle
