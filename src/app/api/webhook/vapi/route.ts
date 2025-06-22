@@ -39,25 +39,16 @@ function handleFunctionCall(message: any) {
   try {
     const result = VapiService.handleFunctionCall(functionCall);
 
-    const result_json = {
-      // type: 'function-call-result',
-      results: [{
-      toolCallId: functionCall.toolCallList[0].id,
-      result: result
-      }],
-    }
-
-    console.log('Function call result:', result_json);
+    console.log('Function call result:', result);
     
-    return NextResponse.json(result_json);
+    return NextResponse.json(result);
   } catch (error) {
     console.error('Function call error:', error);
     return NextResponse.json({
-      type: 'function-call-result',
-      functionCallResult: {
-        callId: functionCall.toolCallList[0].id,
+      results: [{
+        toolCallId: functionCall.toolCallList[0].id,
         error: 'Function call failed'
-      }
+      }]
     });
   }
 } 
