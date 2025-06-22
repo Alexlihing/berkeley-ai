@@ -589,7 +589,7 @@ function drawBirthdayNode(
 type BranchSide = 'above' | 'below';
 
 const Timeline = forwardRef(function Timeline({ nodes, branches, loading, onSlidingStateChange }: TimelineProps, ref) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef =  useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
@@ -616,6 +616,25 @@ const Timeline = forwardRef(function Timeline({ nodes, branches, loading, onSlid
     lastNodeCount: 0,
     lastBranchCount: 0
   });
+
+  // Edit tracking for sequential processing
+  type EditItem =
+    | { kind: 'node_create' | 'node_update'; node: Node }
+    | { kind: 'branch_create' | 'branch_update' | 'branch_end'; branch: Branch };
+
+  // Queue holding incoming edits to be focused one-by-one
+  const editQueue = useRef<EditItem[]>([]);
+  const isProcessingQueue = useRef(false);
+
+  // Animation tracking: uuid -> timeAdded (ms)
+  const animatedNodeAdd = useRef<Map<string, number>>(new Map());
+  const animatedBranchAdd = useRef<Map<string, number>>(new Map());
+
+  // Store full dataset that arrived with latest SSE; flushed when queue completes
+  const pendingNodes = useRef<Node[] | null>(null);
+  const pendingBranches = useRef<Branch[] | null>(null);
+
+  const hasInitialSnapshot = useRef(false);
 
   // State for current viewport and time
   const [currentTime, setCurrentTime] = useState<number>(Date.now() / 1000);
@@ -770,30 +789,105 @@ const Timeline = forwardRef(function Timeline({ nodes, branches, loading, onSlid
     if (slidingWindowTime !== null) draw();
   }, [slidingWindowTime]);
 
-  // Update persisted data when new data arrives (but only if it's actually new)
+  // Update persisted snapshots & build a queue of granular edits whenever fresh timeline data arrives
   useEffect(() => {
     const now = Date.now();
-    const dataHash = JSON.stringify({ nodes, branches });
-    
-    // Only update if data has actually changed or if we have no data yet
-    if (persistedNodes.current.length === 0 && persistedBranches.current.length === 0) {
-      // Initial load
+    console.log(`🔍 Diff effect triggered - incoming: ${nodes.length} nodes, ${branches.length} branches`);
+    console.log('Current persisted data:', {
+      persistedNodes: persistedNodes.current.length,
+      persistedBranches: persistedBranches.current.length,
+      isProcessingQueue: isProcessingQueue.current,
+      editQueueLength: editQueue.current.length
+    });
+  
+    if (!hasInitialSnapshot.current && (nodes.length > 0 || branches.length > 0)) {
+      console.log('📝 Capturing first non-empty snapshot (skip animations)');
       persistedNodes.current = [...nodes];
       persistedBranches.current = [...branches];
-      lastDataUpdate.current = now;
-      console.log('Initial data loaded:', { nodesCount: nodes.length, branchesCount: branches.length });
-    } else if (now - lastDataUpdate.current > 1000) {
-      // Only update if more than 1 second has passed since last update
-      // This prevents rapid updates during interactions
-      const nodesChanged = JSON.stringify(persistedNodes.current) !== JSON.stringify(nodes);
-      const branchesChanged = JSON.stringify(persistedBranches.current) !== JSON.stringify(branches);
-      
-      if (nodesChanged || branchesChanged) {
-        persistedNodes.current = [...nodes];
-        persistedBranches.current = [...branches];
-        lastDataUpdate.current = now;
-        console.log('Data updated after delay:', { nodesCount: nodes.length, branchesCount: branches.length });
+      hasInitialSnapshot.current = true;
+      draw();
+      return;
+    }
+
+    const nodesChanged = JSON.stringify(nodes) !== JSON.stringify(persistedNodes.current);
+    const branchesChanged = JSON.stringify(branches) !== JSON.stringify(persistedBranches.current);
+
+    if (!nodesChanged && !branchesChanged) {
+      console.log('⚠️ Arrays appear identical (string compare), but will still compute diff in case of hidden changes');
+    } else {
+      console.log('✅ Detected array-level changes; computing diff...');
+    }
+
+    const newEdits: EditItem[] = [];
+
+    // ── Node diffs ───────────────────────────────────────────────────────────
+    const prevNodeMap = new Map(persistedNodes.current.map((n) => [n.uuid, n]));
+    nodes.forEach((n) => {
+      const prev = prevNodeMap.get(n.uuid);
+      if (!prev) {
+        newEdits.push({ kind: 'node_create', node: n });
+      } else if (JSON.stringify(prev) !== JSON.stringify(n)) {
+        newEdits.push({ kind: 'node_update', node: n });
       }
+      prevNodeMap.delete(n.uuid);
+    });
+    // We purposely ignore deletions – they don't need camera focus.
+
+    // ── Branch diffs ─────────────────────────────────────────────────────────
+    const prevBranchMap = new Map(persistedBranches.current.map((b) => [b.branchId, b]));
+    branches.forEach((b) => {
+      const prev = prevBranchMap.get(b.branchId);
+      if (!prev) {
+        newEdits.push({ kind: 'branch_create', branch: b });
+      } else if (
+        prev.branchEnd !== b.branchEnd ||
+        prev.branchStart !== b.branchStart ||
+        prev.branchSummary !== b.branchSummary
+      ) {
+        if (prev.branchEnd === '' && b.branchEnd && b.branchEnd !== '') {
+          newEdits.push({ kind: 'branch_end', branch: b });
+        } else {
+          newEdits.push({ kind: 'branch_update', branch: b });
+        }
+      }
+      prevBranchMap.delete(b.branchId);
+    });
+
+    // Keep full incoming sets so we can flush after queue finishes
+    pendingNodes.current = [...nodes];
+    pendingBranches.current = [...branches];
+    // Do NOT mutate persisted* here – they will be updated when the queue empties.
+
+    if (newEdits.length > 0) {
+      const getEditTimestamp = (e: EditItem): number => {
+        switch (e.kind) {
+          case 'node_create':
+          case 'node_update':
+            return isoToEpochSeconds(e.node.timeStamp);
+          case 'branch_create':
+          case 'branch_update':
+          case 'branch_end':
+            return isoToEpochSeconds((e as any).branch.branchStart);
+          default:
+            return 0;
+        }
+      };
+
+      newEdits.sort((a,b)=> getEditTimestamp(a)-getEditTimestamp(b));
+      console.log(`📊 Diff detected ${newEdits.length} edits:`, newEdits.map(e => ({
+        kind: e.kind,
+        item: e.kind.includes('node') ? (e as any).node.content.slice(0, 20) : (e as any).branch.branchName,
+        timestamp: getEditTimestamp(e)
+      })));
+      editQueue.current.push(...newEdits);
+      console.log(`📋 Total queue size now: ${editQueue.current.length}`);
+      processNextEdit();
+    } else {
+      console.log('🔄 No granular edits (likely only deletions); refreshing snapshot');
+      // Update persisted snapshots immediately so UI reflects removals
+      persistedNodes.current = [...nodes];
+      persistedBranches.current = [...branches];
+      draw();
     }
   }, [nodes, branches]);
 
@@ -1215,6 +1309,13 @@ const Timeline = forwardRef(function Timeline({ nodes, branches, loading, onSlid
         const side = branchSide.get(branch.branchId);
         if (branchY === undefined || side === undefined) return;
 
+        // Apply fade-in animation for new branches
+        const fadeAlpha = getBranchFadeAlpha(branch.branchId);
+        if (fadeAlpha < 1) {
+          ctx.save();
+          ctx.globalAlpha = fadeAlpha;
+        }
+
         const branchStart = isoToEpochSeconds(branch.branchStart);
         const branchEnd = branch.branchEnd && branch.branchEnd !== ''
           ? isoToEpochSeconds(branch.branchEnd)
@@ -1384,6 +1485,11 @@ const Timeline = forwardRef(function Timeline({ nodes, branches, loading, onSlid
             size
           );
         }
+
+        // Restore global alpha if it was modified
+        if (fadeAlpha < 1) {
+          ctx.restore();
+        }
       });
     }
 
@@ -1452,6 +1558,13 @@ const Timeline = forwardRef(function Timeline({ nodes, branches, loading, onSlid
     // Draw nodes with collision-aware labels
     visibleNodes.forEach((nodeInfo, index) => {
       const { node, nodeX, branchY, side, shortContent, isBirthday, textWidth, labelY, textLeft, textRight } = nodeInfo;
+
+      // Apply fade-in animation for new nodes
+      const fadeAlpha = getNodeFadeAlpha(node.uuid);
+      if (fadeAlpha < 1) {
+        ctx.save();
+        ctx.globalAlpha = fadeAlpha;
+      }
 
       // Draw the node circle first (always visible)
       if (isBirthday) {
@@ -1522,6 +1635,11 @@ const Timeline = forwardRef(function Timeline({ nodes, branches, loading, onSlid
         
         ctx.fillText(shortContent, nodeX, labelY);
         ctx.globalAlpha = 1; // reset
+      }
+
+      // Restore global alpha if it was modified for node fade-in
+      if (fadeAlpha < 1) {
+        ctx.restore();
       }
     });
 
@@ -2180,6 +2298,132 @@ const Timeline = forwardRef(function Timeline({ nodes, branches, loading, onSlid
       onSlidingStateChange(isSliding, isPaused);
     }
   }, [isSliding, isPaused]);
+
+  // ───────────────────────── Queue processing helpers ─────────────────────────
+  function processNextEdit() {
+    if (isProcessingQueue.current) return;
+
+    if (editQueue.current.length === 0) {
+      console.log("🎯 Edit queue empty - flushing pending data");
+      // flush pending data into persisted snapshots
+      if (pendingNodes.current && pendingBranches.current) {
+        console.log(`📦 Flushing ${pendingNodes.current.length} nodes and ${pendingBranches.current.length} branches`);
+        persistedNodes.current = [...pendingNodes.current];
+        persistedBranches.current = [...pendingBranches.current];
+        pendingNodes.current = null;
+        pendingBranches.current = null;
+        lastDataUpdate.current = Date.now();
+        draw();
+      }
+      setTimeout(() => {
+        autoFitToData();
+      }, 400);
+      return;
+    }
+
+    isProcessingQueue.current = true;
+    const edit = editQueue.current.shift()!;
+    
+    console.log(`Processing edit ${editQueue.current.length + 1} remaining:`, edit.kind, 
+      edit.kind.includes('node') ? (edit as any).node.content.slice(0, 30) : (edit as any).branch.branchName);
+
+    // Mark this edit item for animation
+    const now = Date.now();
+    if (edit.kind === 'node_create' || edit.kind === 'node_update') {
+      animatedNodeAdd.current.set(edit.node.uuid, now);
+    } else if (edit.kind === 'branch_create' || edit.kind === 'branch_update' || edit.kind === 'branch_end') {
+      const branchEdit: any = edit as any;
+      animatedBranchAdd.current.set(branchEdit.branch.branchId, now);
+    }
+
+    // Apply this single edit to the visible snapshot
+    applyEditToSnapshot(edit);
+
+    const waitMs = SCROLL_ANIMATION_DURATION + 1500; // Increased from 300ms to 1500ms
+    setTimeout(() => {
+      isProcessingQueue.current = false;
+      processNextEdit();
+    }, waitMs);
+  }
+
+  /** Apply a single EditItem to persisted snapshots so canvas redraw reflects only that change */
+  const applyEditToSnapshot = (edit: EditItem) => {
+    if (edit.kind === 'node_create' || edit.kind === 'node_update') {
+      const list = persistedNodes.current;
+      const idx = list.findIndex(n => n.uuid === edit.node.uuid);
+      if (idx === -1) list.push(edit.node); else list[idx] = edit.node;
+    } else {
+      const branchEdit: any = edit as any;
+      const list = persistedBranches.current;
+      const idx = list.findIndex(b => b.branchId === branchEdit.branch.branchId);
+      if (idx === -1) list.push(branchEdit.branch); else list[idx] = branchEdit.branch;
+    }
+
+    // Compute target viewport based on updated snapshot
+    // Default: 6-hour view centred vertically
+    let targetTimestamp = currentTime;
+    let granularity = (6 * SECONDS_IN_HOUR) / Math.max(size.width, 1);
+    let targetY = size.height / 2;
+
+    // Recompute branch layout *after* applying the edit so positions include new/updated branch
+    const centreY = size.height / 2 + offsetY.current;
+    const { positions } = computeBranchLayout(centreY, currentTime);
+
+    if (edit.kind === 'node_create' || edit.kind === 'node_update') {
+      targetTimestamp = isoToEpochSeconds(edit.node.timeStamp);
+      targetY = positions.get(edit.node.branchId) ?? targetY;
+    } else {
+      const branch = (edit as any).branch as Branch;
+      const start = isoToEpochSeconds(branch.branchStart);
+      const end = branch.branchEnd && branch.branchEnd !== '' ? isoToEpochSeconds(branch.branchEnd) : currentTime;
+      const range = end - start;
+      const paddedRange = Math.max(range * 1.2, 6 * SECONDS_IN_HOUR);
+      granularity = paddedRange / Math.max(size.width, 1);
+      targetTimestamp = (start + end) / 2;
+      targetY = positions.get(branch.branchId) ?? targetY;
+    }
+
+    // Trigger smooth viewport focus
+    if (typeof focusViewportToLoc === 'function') {
+      focusViewportToLoc(targetTimestamp, targetY, granularity);
+    } else if ((window as any).focusViewportToLoc) {
+      (window as any).focusViewportToLoc(targetTimestamp, targetY, granularity);
+    }
+  };
+
+  /** Calculate fade-in alpha for a node based on animation time */
+  const getNodeFadeAlpha = (uuid: string, fadeDurationMs = 500): number => {
+    const startTime = animatedNodeAdd.current.get(uuid);
+    if (!startTime) return 1; // No animation, fully visible
+    const elapsed = Date.now() - startTime;
+    if (elapsed >= fadeDurationMs) {
+      animatedNodeAdd.current.delete(uuid); // cleanup
+      return 1;
+    }
+    return Math.min(1, elapsed / fadeDurationMs);
+  };
+
+  /** Calculate fade-in alpha for a branch based on animation time */
+  const getBranchFadeAlpha = (branchId: string, fadeDurationMs = 500): number => {
+    const startTime = animatedBranchAdd.current.get(branchId);
+    if (!startTime) return 1; // No animation, fully visible
+    const elapsed = Date.now() - startTime;
+    if (elapsed >= fadeDurationMs) {
+      animatedBranchAdd.current.delete(branchId); // cleanup
+      return 1;
+    }
+    return Math.min(1, elapsed / fadeDurationMs);
+  };
+
+  // Force re-render during fade animations
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (animatedNodeAdd.current.size > 0 || animatedBranchAdd.current.size > 0) {
+        draw(); // redraw during animation
+      }
+    }, 16); // 60fps
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <div ref={containerRef} className="w-full h-full bg-black cursor-grab select-none font-lora relative">
