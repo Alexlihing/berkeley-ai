@@ -1,12 +1,11 @@
 'use client';
 
 import React, { useRef, useEffect, useState } from 'react';
-
+import { nodes, branches } from './timelineData'; // Example data import
 // Time constants
 const SECONDS_IN_MINUTE = 60;
 const SECONDS_IN_HOUR = 60 * SECONDS_IN_MINUTE;
 const SECONDS_IN_DAY = 24 * SECONDS_IN_HOUR;
-const SECONDS_IN_WEEK = 7 * SECONDS_IN_DAY;
 const SECONDS_IN_MONTH = 30 * SECONDS_IN_DAY; // Approximate for step calculation only
 const SECONDS_IN_YEAR = 365.25 * SECONDS_IN_DAY; // Approximate for step calculation only
 
