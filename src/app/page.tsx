@@ -1,13 +1,7 @@
 'use client';
 
-import Timeline from '@/components/Timeline';
 import { useState, useEffect, useRef } from 'react';
 import Vapi from '@vapi-ai/web';
-
-export default function Home() {
-  return (
-    <div className="w-screen h-screen overflow-hidden">
-      <Timeline />
 
 interface Recommendation {
   id: string;
