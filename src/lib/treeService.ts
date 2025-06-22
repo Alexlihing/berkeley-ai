@@ -50,89 +50,89 @@ const notifySubscribers = (updateType: UpdateType, data: any) => {
   });
 };
 
-//const branches: Branch[] = []
-//const nodes: Node[] = []
-const branches: Branch[] = [
-  new Branch(
-    '', // no parent
-    rootBranchId,
-    new Date('2023-01-01').toISOString(),
-    '', // no end date for root
-    'Main',
-    'The main timeline of my life'
-  ),
-  new Branch(
-    rootBranchId,
-    workBranchId,
-    new Date('2023-03-01').toISOString(),
-    '', // Active branch
-    'Work Projects',
-    'Tracking all my work-related projects and tasks.'
-  ),
-  new Branch(
-    rootBranchId,
-    personalBranchId,
-    new Date('2023-04-01').toISOString(),
-    new Date('2023-06-30').toISOString(), // A completed branch
-    'Learn Guitar',
-    'My journey to learning how to play the guitar.'
-  ),
-];
+const branches: Branch[] = []
+const nodes: Node[] = []
+// const branches: Branch[] = [
+//   new Branch(
+//     '', // no parent
+//     rootBranchId,
+//     new Date('2023-01-01').toISOString(),
+//     '', // no end date for root
+//     'Main',
+//     'The main timeline of my life'
+//   ),
+//   new Branch(
+//     rootBranchId,
+//     workBranchId,
+//     new Date('2023-03-01').toISOString(),
+//     '', // Active branch
+//     'Work Projects',
+//     'Tracking all my work-related projects and tasks.'
+//   ),
+//   new Branch(
+//     rootBranchId,
+//     personalBranchId,
+//     new Date('2023-04-01').toISOString(),
+//     new Date('2023-06-30').toISOString(), // A completed branch
+//     'Learn Guitar',
+//     'My journey to learning how to play the guitar.'
+//   ),
+// ];
 
-const nodes: Node[] = [
-  // Nodes for root branch
-  new Node(
-    uuidv4(),
-    rootBranchId,
-    new Date('2023-01-10').toISOString(),
-    'Started journaling my life like a git tree.',
-    false
-  ),
-  new Node(
-    uuidv4(),
-    rootBranchId,
-    new Date('2023-02-15').toISOString(),
-    'Had a great idea for a new project.',
-    false
-  ),
-  // Nodes for 'Work' branch
-  new Node(
-    uuidv4(),
-    workBranchId,
-    new Date('2023-03-05').toISOString(),
-    'Launched the alpha version of Project Phoenix.',
-    false
-  ),
-  new Node(
-    uuidv4(),
-    workBranchId,
-    new Date('2023-03-20').toISOString(),
-    'Finished user testing and gathered feedback.',
-    false
-  ),
-  // Nodes for 'Personal' branch
-  new Node(
-    uuidv4(),
-    personalBranchId,
-    new Date('2023-04-02').toISOString(),
-    'Bought my first acoustic guitar.',
-    false
-  ),
-  new Node(
-    uuidv4(),
-    personalBranchId,
-    new Date('2023-05-15').toISOString(),
-    'Can now play "Wonderwall".',
-    true // isUpdating
-  ),
-  new Node(
-    uuidv4(),
-    personalBranchId,
-    new Date('2023-06-30').toISOString(),
-    'Performed at an open mic night! Branch complete.',
-    false
-  ),
-];
+// const nodes: Node[] = [
+//   // Nodes for root branch
+//   new Node(
+//     uuidv4(),
+//     rootBranchId,
+//     new Date('2023-01-10').toISOString(),
+//     'Started journaling my life like a git tree.',
+//     false
+//   ),
+//   new Node(
+//     uuidv4(),
+//     rootBranchId,
+//     new Date('2023-02-15').toISOString(),
+//     'Had a great idea for a new project.',
+//     false
+//   ),
+//   // Nodes for 'Work' branch
+//   new Node(
+//     uuidv4(),
+//     workBranchId,
+//     new Date('2023-03-05').toISOString(),
+//     'Launched the alpha version of Project Phoenix.',
+//     false
+//   ),
+//   new Node(
+//     uuidv4(),
+//     workBranchId,
+//     new Date('2023-03-20').toISOString(),
+//     'Finished user testing and gathered feedback.',
+//     false
+//   ),
+//   // Nodes for 'Personal' branch
+//   new Node(
+//     uuidv4(),
+//     personalBranchId,
+//     new Date('2023-04-02').toISOString(),
+//     'Bought my first acoustic guitar.',
+//     false
+//   ),
+//   new Node(
+//     uuidv4(),
+//     personalBranchId,
+//     new Date('2023-05-15').toISOString(),
+//     'Can now play "Wonderwall".',
+//     true // isUpdating
+//   ),
+//   new Node(
+//     uuidv4(),
+//     personalBranchId,
+//     new Date('2023-06-30').toISOString(),
+//     'Performed at an open mic night! Branch complete.',
+//     false
+//   ),
+// ];
 
 export class TreeService {
   // Find a branch by UUID

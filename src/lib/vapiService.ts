@@ -46,9 +46,13 @@ export class VapiService {
               type: "string",
               description: "Summary description of what this branch contains"
             },
-            timestamp: {
+            branchStart: {
               type: "string",
               description: "ISO timestamp for when this branch started (optional, defaults to current time)"
+            },
+            branchEnd: {
+              type: "string",
+              description: "ISO timestamp for when this branch ended (optional, use empty string for active branches)"
             }
           },
           required: ["parentBranchId", "branchName", "branchSummary"]
@@ -348,9 +352,9 @@ export class VapiService {
   }
 
   private static handleAddBranch(parameters: any) {
-    const { parentBranchId, branchName, branchSummary, timestamp } = parameters;
+    const { parentBranchId, branchName, branchSummary, branchStart, branchEnd } = parameters;
     
-    const newBranch = TreeService.addBranch(parentBranchId, branchName, branchSummary, timestamp);
+    const newBranch = TreeService.addBranch(parentBranchId, branchName, branchSummary, branchStart, branchEnd);
     return {
       success: true,
       message: `Created new branch: ${branchName}`,
