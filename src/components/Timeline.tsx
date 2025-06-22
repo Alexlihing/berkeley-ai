@@ -64,6 +64,20 @@ const BRANCH_COLORS = [
   '#831843', // Very Dark Rose
 ];
 
+// Rainbow confetti colors for birthday nodes
+const RAINBOW_COLORS = [
+  '#FF0000', // Red
+  '#FF7F00', // Orange
+  '#FFFF00', // Yellow
+  '#00FF00', // Green
+  '#0000FF', // Blue
+  '#4B0082', // Indigo
+  '#9400D3', // Violet
+  '#FF69B4', // Hot Pink
+  '#00FFFF', // Cyan
+  '#FFD700', // Gold
+];
+
 // Function to get consistent color for a branch with better variance
 function getBranchColor(branchId: string): string {
   // More complex hash function for better distribution
@@ -381,6 +395,120 @@ function drawCurvedEndConnector(
   return branchLineEndX;
 }
 
+/**
+ * Draws a rounded corner text box with outline at the specified position
+ */
+function drawRoundedTextBox(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  text: string,
+  color: string,
+  side: 'above' | 'below',
+  size: { width: number; height: number }
+) {
+  // Text styling
+  ctx.font = '12px Lora, serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  
+  // Measure text dimensions
+  const textMetrics = ctx.measureText(text);
+  const textWidth = textMetrics.width;
+  const textHeight = 16; // Approximate line height
+  
+  // Box dimensions with padding
+  const padding = 8;
+  const boxWidth = textWidth + padding * 2;
+  const boxHeight = textHeight + padding * 2;
+  const cornerRadius = 6;
+  
+  // Position the box vertically centered with the branch line end
+  const boxX = x + 10; // Offset from the branch end
+  const boxY = y - boxHeight / 2; // Center vertically with the branch line
+  
+  // Only draw if box is visible
+  if (boxX + boxWidth < 0 || boxX > size.width) return;
+  
+  // Draw rounded rectangle outline only (no background fill)
+  ctx.strokeStyle = color; // Use accent color for outline
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(boxX + cornerRadius, boxY);
+  ctx.lineTo(boxX + boxWidth - cornerRadius, boxY);
+  ctx.quadraticCurveTo(boxX + boxWidth, boxY, boxX + boxWidth, boxY + cornerRadius);
+  ctx.lineTo(boxX + boxWidth, boxY + boxHeight - cornerRadius);
+  ctx.quadraticCurveTo(boxX + boxWidth, boxY + boxHeight, boxX + boxWidth - cornerRadius, boxY + boxHeight);
+  ctx.lineTo(boxX + cornerRadius, boxY + boxHeight);
+  ctx.quadraticCurveTo(boxX, boxY + boxHeight, boxX, boxY + boxHeight - cornerRadius);
+  ctx.lineTo(boxX, boxY + cornerRadius);
+  ctx.quadraticCurveTo(boxX, boxY, boxX + cornerRadius, boxY);
+  ctx.closePath();
+  ctx.stroke();
+  
+  // Draw text in accent color
+  ctx.fillStyle = color;
+  ctx.fillText(text, boxX + padding, boxY + boxHeight / 2);
+}
+
+// Function to check if a node is a birthday node
+function isBirthdayNode(node: any): boolean {
+  return node.content.toLowerCase().includes('birthday') || 
+         node.uuid === 'birthday-node';
+}
+
+// Function to draw a rainbow confetti birthday node
+function drawBirthdayNode(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number = 20 // Extra large size for birthday nodes
+) {
+  // Draw background outline
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(x, y, size, 0, 2 * Math.PI);
+  ctx.stroke();
+  
+  // Create rainbow confetti pattern inside the circle
+  const numConfetti = 12;
+  const confettiSize = 3;
+  
+  for (let i = 0; i < numConfetti; i++) {
+    // Random position within the circle
+    const angle = (i / numConfetti) * 2 * Math.PI;
+    const radius = Math.random() * (size - confettiSize - 2);
+    const confettiX = x + radius * Math.cos(angle);
+    const confettiY = y + radius * Math.sin(angle);
+    
+    // Random rainbow color
+    const colorIndex = Math.floor(Math.random() * RAINBOW_COLORS.length);
+    ctx.fillStyle = RAINBOW_COLORS[colorIndex];
+    
+    // Draw confetti piece (small square)
+    ctx.fillRect(
+      confettiX - confettiSize/2, 
+      confettiY - confettiSize/2, 
+      confettiSize, 
+      confettiSize
+    );
+  }
+  
+  // Add some sparkle effects
+  const sparkleCount = 6;
+  for (let i = 0; i < sparkleCount; i++) {
+    const sparkleAngle = (i / sparkleCount) * 2 * Math.PI;
+    const sparkleRadius = size + 8;
+    const sparkleX = x + sparkleRadius * Math.cos(sparkleAngle);
+    const sparkleY = y + sparkleRadius * Math.sin(sparkleAngle);
+    
+    ctx.fillStyle = RAINBOW_COLORS[i % RAINBOW_COLORS.length];
+    ctx.beginPath();
+    ctx.arc(sparkleX, sparkleY, 2, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+}
 
 export default function Timeline() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -812,9 +940,19 @@ export default function Timeline() {
         const parentBranchY = parentBranchId ? branchPositions.get(parentBranchId) : branchY;
         const markerY = parentBranchY !== undefined ? parentBranchY : branchY;
         
-        ctx.fillStyle = getBranchColor(branch.branchId);
+        const branchColor = getBranchColor(branch.branchId);
+        
+        // Draw background outline first
+        ctx.strokeStyle = '#000000'; // Black background outline
+        ctx.lineWidth = 4;
         ctx.beginPath();
         ctx.arc(startX, markerY, 8, 0, 2 * Math.PI);
+        ctx.stroke();
+        
+        // Draw accent color fill
+        ctx.fillStyle = branchColor;
+        ctx.beginPath();
+        ctx.arc(startX, markerY, 7, 0, 2 * Math.PI);
         ctx.fill();
         
         // Branch name label - position based on side
@@ -823,7 +961,7 @@ export default function Timeline() {
         ctx.textBaseline = 'middle';
         ctx.fillStyle = getBranchColor(branch.branchId);
         
-        const labelY = side === 'above' ? branchY - 20 : branchY + 20;
+        const labelY = side === 'above' ? branchY - 15 : branchY + 15;
         ctx.fillText(branch.branchName, startX, labelY);
       } else if (startX < -10 && endX > 0) {
         // Start node is off-screen to the left, but branch line is still visible
@@ -833,7 +971,7 @@ export default function Timeline() {
         ctx.textBaseline = 'middle';
         ctx.fillStyle = getBranchColor(branch.branchId);
         
-        const labelY = side === 'above' ? branchY - 20 : branchY + 20;
+        const labelY = side === 'above' ? branchY - 15 : branchY + 15;
         ctx.fillText(branch.branchName, 0, labelY);
       }
 
@@ -844,10 +982,35 @@ export default function Timeline() {
         const parentBranchY = parentBranchId ? branchPositions.get(parentBranchId) : branchY;
         const markerY = parentBranchY !== undefined ? parentBranchY : branchY;
         
-        ctx.fillStyle = getBranchColor(branch.branchId);
+        const branchColor = getBranchColor(branch.branchId);
+        
+        // Draw background outline first
+        ctx.strokeStyle = '#000000'; // Black background outline
+        ctx.lineWidth = 4;
         ctx.beginPath();
         ctx.arc(endX, markerY, 8, 0, 2 * Math.PI);
+        ctx.stroke();
+        
+        // Draw accent color fill
+        ctx.fillStyle = branchColor;
+        ctx.beginPath();
+        ctx.arc(endX, markerY, 7, 0, 2 * Math.PI);
         ctx.fill();
+      }
+      
+      // Draw text box for open-ended branches at "today" terminal
+      if (!branch.branchEnd && endX >= -50 && endX <= size.width + 50) {
+        // This is an open-ended branch that extends to today
+        // Draw a text box with the branch summary at the "today" terminal
+        drawRoundedTextBox(
+          ctx,
+          endX,
+          branchY,
+          branch.branchSummary,
+          getBranchColor(branch.branchId),
+          side,
+          size
+        );
       }
     });
 
@@ -863,27 +1026,46 @@ export default function Timeline() {
       // Only draw if node is visible
       if (nodeX < -20 || nodeX > size.width + 20) return;
 
-      // Draw node circle with branch color
-      const branchColor = getBranchColor(node.branchId);
-      ctx.fillStyle = branchColor;
-      ctx.beginPath();
-      ctx.arc(nodeX, branchY, NODE_RADIUS, 0, 2 * Math.PI);
-      ctx.fill();
-      
-      // Draw node border
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = 2;
-      ctx.stroke();
+      // Check if this is a birthday node and render specially
+      if (isBirthdayNode(node)) {
+        drawBirthdayNode(ctx, nodeX, branchY, 20); // Extra large size for birthday
+        
+        // Draw birthday label with special styling
+        const shortContent = node.content.length > 30 ? node.content.substring(0, 30) + '...' : node.content;
+        ctx.font = 'bold 14px Lora, serif'; // Bold and larger font for birthday
+        ctx.textAlign = 'center';
+        ctx.textBaseline = side === 'above' ? 'top' : 'bottom';
+        ctx.fillStyle = '#FFD700'; // Gold color for birthday text
+        
+        const labelY = side === 'above' ? branchY + 35 : branchY - 35; // More offset due to larger node
+        ctx.fillText(shortContent, nodeX, labelY);
+      } else {
+        // Regular node rendering
+        const branchColor = getBranchColor(node.branchId);
+        
+        // Draw background outline first
+        ctx.strokeStyle = '#000000'; // Black background outline
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(nodeX, branchY, NODE_RADIUS, 0, 2 * Math.PI);
+        ctx.stroke();
+        
+        // Draw accent color fill
+        ctx.fillStyle = branchColor;
+        ctx.beginPath();
+        ctx.arc(nodeX, branchY, NODE_RADIUS - 1, 0, 2 * Math.PI);
+        ctx.fill();
 
-      // Draw node label - position based on side
-      const shortContent = node.content.length > 30 ? node.content.substring(0, 30) + '...' : node.content;
-      ctx.font = '12px Lora, serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = side === 'above' ? 'top' : 'bottom';
-      ctx.fillStyle = '#FFFFFF';
-      
-      const labelY = side === 'above' ? branchY + 15 : branchY - 15;
-      ctx.fillText(shortContent, nodeX, labelY);
+        // Draw node label - position based on side
+        const shortContent = node.content.length > 30 ? node.content.substring(0, 30) + '...' : node.content;
+        ctx.font = '12px Lora, serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = side === 'above' ? 'top' : 'bottom';
+        ctx.fillStyle = '#FFFFFF';
+        
+        const labelY = side === 'above' ? branchY + 15 : branchY - 15;
+        ctx.fillText(shortContent, nodeX, labelY);
+      }
     });
 
     // Red "today" line (unchanged)
