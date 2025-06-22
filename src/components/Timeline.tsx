@@ -881,9 +881,29 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
   useEffect(() => {
     if (size.width === 0 || isInitialized.current) return;
 
-    // Use auto-fit instead of fixed 70-year view
-    autoFitToData();
+    // Check if we have data, if not set up a default view
+    const currentNodes = getCurrentNodes();
+    const currentBranches = getCurrentBranches();
+    
+    if (currentNodes.length === 0 && currentBranches.length === 0) {
+      // No data: set up a default "today" view
+      const timestamp = Date.now() / 1000;
+      const historySeconds = 8 * SECONDS_IN_HOUR;
+      const futureSeconds = (historySeconds * 0.4) / 0.6;
+      const totalTimeSpan = historySeconds + futureSeconds;
+      const granularity = totalTimeSpan / size.width;
+      
+      // Set up default view
+      scaleSecPerPx.current = granularity;
+      offsetEpochSec.current = timestamp - (size.width / 2) * granularity;
+      offsetY.current = 0;
+    } else {
+      // Has data: use auto-fit
+      autoFitToData();
+    }
+    
     isInitialized.current = true;
+    draw(); // Initial draw
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.width]);
 
@@ -928,11 +948,7 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
       isAnimating: isAnimating.current
     });
 
-    // Early return if no data and not loading
-    if (currentNodes.length === 0 && currentBranches.length === 0 && !loading) {
-      console.log('No data to draw, returning early');
-      return;
-    }
+    // Draw the timeline even without data so dragging/zooming works
 
     // Retina support
     const dpr = window.devicePixelRatio || 1;
@@ -1457,15 +1473,6 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
 
     const onMouseMove = (e: MouseEvent) => {
       if (!isDragging.current) return;
-      
-      // Ensure data is still available during drag
-      const currentNodes = getCurrentNodes();
-      const currentBranches = getCurrentBranches();
-      if (currentNodes.length === 0 && currentBranches.length === 0) {
-        console.log('Data lost during drag, stopping');
-        endDrag();
-        return;
-      }
       
       const now = Date.now();
       const deltaTime = now - lastDragTime.current;
