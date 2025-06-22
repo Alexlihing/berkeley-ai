@@ -16,7 +16,8 @@ const BIRTH_DATE_EPOCH_SEC = 0; // Unix epoch
 const LEFT_PADDING = 100;
 
 // Animation constants
-const ANIMATION_DURATION = 300; // ms
+// Mouse-wheel zoom uses this fixed duration (in ms)
+const SCROLL_ANIMATION_DURATION = 300;
 const VELOCITY_DECAY = 0.94; // Higher for more natural floating feel
 const MIN_VELOCITY = 0.1; // Lower threshold for longer gliding
 
@@ -43,6 +44,11 @@ const TICK_STEPS: number[] = [
 // Easing function (ease out cubic)
 function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
+}
+
+// Ease-in-out cubic (symmetric)
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
 /**
@@ -225,14 +231,18 @@ export default function Timeline() {
   const velocityY = useRef<number>(0);
   const isAnimating = useRef<boolean>(false);
 
-  // Zoom animation state
+  // Generic animation state for any smooth zoom/pan operation (mouse-wheel or programmatic)
   const zoomAnimation = useRef<{
     startScale: number;
     targetScale: number;
     startOffset: number;
     targetOffset: number;
+    startOffsetY?: number;
+    targetOffsetY?: number;
     startTime: number;
     pointerX: number;
+    easing?: (t: number) => number;
+    duration?: number; // custom duration per animation
   } | null>(null);
 
   const isDragging = useRef(false);
@@ -261,8 +271,10 @@ export default function Timeline() {
     if (zoomAnimation.current) {
       const now = Date.now();
       const elapsed = now - zoomAnimation.current.startTime;
-      const progress = Math.min(elapsed / ANIMATION_DURATION, 1);
-      const easedProgress = easeOutCubic(progress);
+      const totalDuration = zoomAnimation.current.duration ?? SCROLL_ANIMATION_DURATION;
+      const progress = Math.min(elapsed / totalDuration, 1);
+      const easingFn = zoomAnimation.current.easing || easeOutCubic;
+      const easedProgress = easingFn(progress);
 
       // Interpolate scale and offset
       scaleSecPerPx.current = zoomAnimation.current.startScale + 
@@ -270,6 +282,12 @@ export default function Timeline() {
       
       offsetEpochSec.current = zoomAnimation.current.startOffset + 
         (zoomAnimation.current.targetOffset - zoomAnimation.current.startOffset) * easedProgress;
+
+      // Optional vertical interpolation (only when provided)
+      if (typeof zoomAnimation.current.startOffsetY === 'number' && typeof zoomAnimation.current.targetOffsetY === 'number') {
+        offsetY.current = zoomAnimation.current.startOffsetY +
+          (zoomAnimation.current.targetOffsetY - zoomAnimation.current.startOffsetY) * easedProgress;
+      }
 
       needsRedraw = true;
 
@@ -646,7 +664,9 @@ export default function Timeline() {
         startOffset: offsetEpochSec.current,
         targetOffset: targetOffset,
         startTime: Date.now(),
-        pointerX: adjustedPointerX
+        pointerX: adjustedPointerX,
+        easing: easeOutCubic,
+        duration: SCROLL_ANIMATION_DURATION,
       };
 
       startAnimation();
@@ -665,6 +685,95 @@ export default function Timeline() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.width, size.height, currentTime]);
+
+  /**
+   * Programmatically move/zoom the viewport so that a given (timestamp, y) pair
+   * appears at the exact centre of the screen, using a smooth ease-in-out
+   * transition. `granularity` is interpreted as the desired seconds-per-pixel
+   * after the animation completes.
+   */
+  const focusViewportToLoc = (timestamp: number, y: number, granularity: number) => {
+    if (size.width === 0 || size.height === 0) return;
+
+    const minSecPerPx = (80 * SECONDS_IN_YEAR) / size.width;   // Same limits as elsewhere
+    const maxSecPerPx = (1 * SECONDS_IN_HOUR) / size.width;
+
+    // Clamp desired zoom level to limits
+    const targetScale = Math.max(Math.min(granularity, minSecPerPx), maxSecPerPx);
+
+    // Horizontal offset so that `timestamp` sits at the horizontal midpoint
+    const halfW = size.width / 2;
+    let targetOffset = timestamp - halfW * targetScale;
+
+    // Respect birth-date left boundary (with padding)
+    const minOffset = BIRTH_DATE_EPOCH_SEC - LEFT_PADDING * targetScale;
+    if (targetOffset < minOffset) targetOffset = minOffset;
+
+    // Vertical offset so that supplied y aligns with vertical midpoint
+    const targetOffsetY = (size.height / 2) - y;
+
+    // Compute dynamic duration based on travel distance & zoom ratio
+    const horizontalDistPx = Math.abs((targetOffset - offsetEpochSec.current) / scaleSecPerPx.current);
+    const verticalDistPx = Math.abs(targetOffsetY - offsetY.current);
+    const zoomRatio = Math.abs(Math.log(targetScale / scaleSecPerPx.current));
+
+    const distanceScore = Math.sqrt(horizontalDistPx ** 2 + verticalDistPx ** 2);
+    let dynamicDuration = 250 + distanceScore * 0.3 + zoomRatio * 350; // ms
+    dynamicDuration = Math.max(300, Math.min(1500, dynamicDuration));
+
+    // Kick off animation
+    zoomAnimation.current = {
+      startScale: scaleSecPerPx.current,
+      targetScale,
+      startOffset: offsetEpochSec.current,
+      targetOffset,
+      startOffsetY: offsetY.current,
+      targetOffsetY,
+      startTime: Date.now(),
+      pointerX: 0,
+      easing: easeInOutCubic,
+      duration: dynamicDuration,
+    };
+
+    startAnimation();
+  };
+
+  /** Convenience helpers --------------------------------------------------*/
+  const focusTodayView = () => {
+    if (size.width === 0 || size.height === 0) return;
+
+    const timestamp = Date.now() / 1000;
+
+    // Match the "initial" 8-hour history view set in the initial effect.
+    const historySeconds = 8 * SECONDS_IN_HOUR;
+    const futureSeconds = (historySeconds * 0.4) / 0.6;
+    const totalTimeSpan = historySeconds + futureSeconds;
+    const granularity = totalTimeSpan / size.width;
+
+    focusViewportToLoc(timestamp, size.height / 2, granularity);
+  };
+
+  const focusBirthdayView = () => {
+    if (size.width === 0 || size.height === 0) return;
+
+    const granularity = SECONDS_IN_DAY / size.width; // One day across the screen
+
+    focusViewportToLoc(BIRTH_DATE_EPOCH_SEC, size.height / 2, granularity);
+  };
+
+  // Expose helpers globally for debugging / external triggers
+  useEffect(() => {
+    const w = window as any;
+    w.focusViewportToLoc = focusViewportToLoc;
+    w.focusTodayView = focusTodayView;
+    w.focusBirthdayView = focusBirthdayView;
+    return () => {
+      delete w.focusViewportToLoc;
+      delete w.focusTodayView;
+      delete w.focusBirthdayView;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size.width, size.height]);
 
   return (
     <div ref={containerRef} className="w-full h-full bg-black cursor-grab select-none font-lora">
