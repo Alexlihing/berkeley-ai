@@ -207,10 +207,13 @@ export default function Timeline() {
   // State kept in refs to avoid re-render loops while panning/zooming
   const scaleSecPerPx = useRef<number>(1); // seconds represented by one CSS pixel
   const offsetEpochSec = useRef<number>(0); // UNIX time (seconds) at x = 0
+  const offsetY = useRef<number>(0); // vertical offset in pixels
 
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
+  const dragStartY = useRef(0);
   const dragStartOffset = useRef(0);
+  const dragStartOffsetY = useRef(0);
 
   // Update current time every minute
   useEffect(() => {
@@ -260,6 +263,9 @@ export default function Timeline() {
     const minOffset = BIRTH_DATE_EPOCH_SEC;
     offsetEpochSec.current = Math.max(offsetEpochSec.current, minOffset);
 
+    // Initialize vertical offset to center
+    offsetY.current = 0;
+
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.width, currentTime]);
@@ -283,7 +289,7 @@ export default function Timeline() {
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, size.width, size.height);
 
-    const centreY = size.height / 2;
+    const centreY = size.height / 2 + offsetY.current; // Apply vertical offset
     const secPerPx = scaleSecPerPx.current;
     const offsetSec = offsetEpochSec.current;
 
@@ -333,7 +339,7 @@ export default function Timeline() {
 
       // Only draw gray lines and labels for times at or after birth date
       if (t >= BIRTH_DATE_EPOCH_SEC) {
-        // Grey full-height bar (only draw for times after birth)
+        // Grey full-height bar (infinitely tall, always draw)
         ctx.strokeStyle = '#444444';
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -341,7 +347,7 @@ export default function Timeline() {
         ctx.lineTo(adjustedX, size.height);
         ctx.stroke();
 
-        // Labels at top of screen, to the right of gray lines (only for times after birth)
+        // Labels at top of screen (fixed position, ignoring vertical offset)
         ctx.fillStyle = '#FFFFFF';
         const label = formatLabel(t, step);
         
@@ -352,11 +358,11 @@ export default function Timeline() {
           const dayPart = parts[0] + ' ' + parts[1]; // "Jan 15"
           const timePart = parts[2]; // "09:00"
           
-          ctx.fillText(dayPart, adjustedX + 5, 10); // Day on first line
-          ctx.fillText(timePart, adjustedX + 5, 25); // Time on second line (15px lower)
+          ctx.fillText(dayPart, adjustedX + 5, 10); // Day on first line (fixed at top)
+          ctx.fillText(timePart, adjustedX + 5, 25); // Time on second line (fixed at top)
         } else {
           // Single line label
-          ctx.fillText(label, adjustedX + 5, 10);
+          ctx.fillText(label, adjustedX + 5, 10); // Fixed at top
         }
       }
 
@@ -399,17 +405,24 @@ export default function Timeline() {
     const onMouseDown = (e: MouseEvent) => {
       isDragging.current = true;
       dragStartX.current = e.clientX;
+      dragStartY.current = e.clientY;
       dragStartOffset.current = offsetEpochSec.current;
+      dragStartOffsetY.current = offsetY.current;
       container.classList.add('cursor-grabbing');
     };
 
     const onMouseMove = (e: MouseEvent) => {
       if (!isDragging.current) return;
       const deltaX = e.clientX - dragStartX.current;
-      const newOffset = dragStartOffset.current - deltaX * scaleSecPerPx.current;
+      const deltaY = e.clientY - dragStartY.current;
       
-      // Prevent panning before birth date
+      // Horizontal panning
+      const newOffset = dragStartOffset.current - deltaX * scaleSecPerPx.current;
       offsetEpochSec.current = Math.max(newOffset, BIRTH_DATE_EPOCH_SEC);
+      
+      // Vertical panning
+      offsetY.current = dragStartOffsetY.current + deltaY;
+      
       draw();
     };
 
