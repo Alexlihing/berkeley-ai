@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useEffect, useState } from 'react';
-import { nodes, branches } from './timelineData'; // Example data import
+import { nodes, branches, Node, Branch } from './timelineData'; // Example data import
 // Time constants
 const SECONDS_IN_MINUTE = 60;
 const SECONDS_IN_HOUR = 60 * SECONDS_IN_MINUTE;
@@ -19,6 +19,44 @@ const LEFT_PADDING = 100;
 const ANIMATION_DURATION = 300; // ms
 const VELOCITY_DECAY = 0.94; // Higher for more natural floating feel
 const MIN_VELOCITY = 0.1; // Lower threshold for longer gliding
+
+// Branch visualization constants
+const BRANCH_SPACING = 60; // pixels between branches
+const BRANCH_HEIGHT = 4; // height of branch line
+const NODE_RADIUS = 6; // radius of node circles
+const TOOLTIP_OFFSET = 10; // pixels offset for tooltip
+
+// Branch colors - consistent red, purple, blue shades
+const BRANCH_COLORS = [
+  '#DC2626', // Red
+  '#B91C1C', // Red
+  '#991B1B', // Red
+  '#7F1D1D', // Red
+  '#8B5CF6', // Purple
+  '#7C3AED', // Violet
+  '#6D28D9', // Purple
+  '#5B21B6', // Purple
+  '#4C1D95', // Purple
+  '#3730A3', // Indigo
+  '#1E40AF', // Blue
+  '#1D4ED8', // Blue
+  '#2563EB', // Blue
+  '#3B82F6', // Blue
+  '#0EA5E9', // Sky blue
+];
+
+// Function to get consistent color for a branch
+function getBranchColor(branchId: string): string {
+  // Simple hash function to get consistent index
+  let hash = 0;
+  for (let i = 0; i < branchId.length; i++) {
+    const char = branchId.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  const index = Math.abs(hash) % BRANCH_COLORS.length;
+  return BRANCH_COLORS[index];
+}
 
 // Candidate tick spacings (in seconds) ordered from fine → coarse
 const TICK_STEPS: number[] = [
@@ -39,6 +77,20 @@ const TICK_STEPS: number[] = [
   5 * SECONDS_IN_YEAR,      // 5 year
   10 * SECONDS_IN_YEAR,     // 10 year
 ];
+
+// Utility function to convert ISO date string to epoch seconds
+function isoToEpochSeconds(isoString: string): number {
+  return new Date(isoString).getTime() / 1000;
+}
+
+// Utility function to format date for tooltip
+function formatDateForTooltip(isoString: string): string {
+  return new Date(isoString).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+}
 
 // Easing function (ease out cubic)
 function easeOutCubic(t: number): number {
@@ -213,6 +265,14 @@ export default function Timeline() {
   // Current time state (updated every minute)
   const [currentTime, setCurrentTime] = useState(() => Date.now() / 1000);
 
+  // Tooltip state
+  const [tooltip, setTooltip] = useState<{
+    x: number;
+    y: number;
+    content: string;
+    type: 'branch' | 'node';
+  } | null>(null);
+
   // State kept in refs to avoid re-render loops while panning/zooming
   const scaleSecPerPx = useRef<number>(1); // seconds represented by one CSS pixel
   const offsetEpochSec = useRef<number>(0); // UNIX time (seconds) at x = 0
@@ -358,23 +418,16 @@ export default function Timeline() {
     const minSecPerPx = (80 * SECONDS_IN_YEAR) / size.width;   // 80 y per screen
     const maxSecPerPx = (1 * SECONDS_IN_HOUR) / size.width;    // 1 h per screen
 
-    // Initial view: 8 hours of history with red line at 60% from left
-    const historySeconds = 8 * SECONDS_IN_HOUR; // 8 hours of history
-    const futureSeconds = (historySeconds * 0.4) / 0.6; // Calculate future time to make red line at 60%
-    const totalTimeSpan = historySeconds + futureSeconds;
+    // Initial view: 70 years span with birth date at left edge
+    const totalTimeSpan = 70 * SECONDS_IN_YEAR; // 70 years total span
     
     scaleSecPerPx.current = totalTimeSpan / size.width;
     
     // Clamp to zoom limits
     scaleSecPerPx.current = Math.max(Math.min(scaleSecPerPx.current, minSecPerPx), maxSecPerPx);
 
-    // Position red line at 60% from left (showing 8 hours of history)
-    const redLinePosition = 0.6; // 60% from left
-    offsetEpochSec.current = currentTime - (scaleSecPerPx.current * size.width * redLinePosition);
-
-    // Ensure we don't pan before birth date
-    const minOffset = BIRTH_DATE_EPOCH_SEC;
-    offsetEpochSec.current = Math.max(offsetEpochSec.current, minOffset);
+    // Position birth date at left edge of screen
+    offsetEpochSec.current = BIRTH_DATE_EPOCH_SEC;
 
     // Initialize vertical offset to center
     offsetY.current = 0;
@@ -511,6 +564,105 @@ export default function Timeline() {
     // Reset alpha
     ctx.globalAlpha = 1;
 
+    // ───────────────────────── Branch and Node Visualization ─────────────────────────
+    
+    // Calculate branch positions (vertical spacing)
+    const branchPositions = new Map<string, number>();
+    let branchIndex = 0;
+    
+    // Assign Y positions to branches
+    branches.forEach(branch => {
+      const branchY = centreY + (branchIndex - Math.floor(branches.length / 2)) * BRANCH_SPACING;
+      branchPositions.set(branch.branchId, branchY);
+      branchIndex++;
+    });
+
+    // Draw branches
+    branches.forEach(branch => {
+      const branchY = branchPositions.get(branch.branchId);
+      if (branchY === undefined) return;
+
+      const startEpoch = isoToEpochSeconds(branch.branchStart);
+      const endEpoch = branch.branchEnd ? isoToEpochSeconds(branch.branchEnd) : currentTime;
+      
+      const startX = (startEpoch - offsetSec) / secPerPx;
+      const endX = (endEpoch - offsetSec) / secPerPx;
+
+      // Only draw if branch is visible
+      if (endX < -50 || startX > size.width + 50) return;
+
+      // Draw branch line
+      ctx.strokeStyle = getBranchColor(branch.branchId);
+      ctx.lineWidth = BRANCH_HEIGHT;
+      ctx.beginPath();
+      ctx.moveTo(Math.max(0, startX), branchY);
+      ctx.lineTo(Math.min(size.width, endX), branchY);
+      ctx.stroke();
+
+      // Draw branch start marker
+      if (startX >= -10 && startX <= size.width + 10) {
+        ctx.fillStyle = getBranchColor(branch.branchId);
+        ctx.beginPath();
+        ctx.arc(startX, branchY, 8, 0, 2 * Math.PI);
+        ctx.fill();
+        
+        // Branch name label
+        ctx.font = '14px Lora, serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = getBranchColor(branch.branchId);
+        ctx.fillText(branch.branchName, startX, branchY - 20);
+      } else if (startX < -10 && endX > 0) {
+        // Start node is off-screen to the left, but branch line is still visible
+        // Position label at left edge of window
+        ctx.font = '14px Lora, serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = getBranchColor(branch.branchId);
+        ctx.fillText(branch.branchName, 0, branchY - 20);
+      }
+
+      // Draw branch end marker (if not ongoing)
+      if (branch.branchEnd && endX >= -10 && endX <= size.width + 10) {
+        ctx.fillStyle = getBranchColor(branch.branchId);
+        ctx.beginPath();
+        ctx.arc(endX, branchY, 8, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    });
+
+    // Draw nodes
+    nodes.forEach(node => {
+      const branchY = branchPositions.get(node.branchId);
+      if (branchY === undefined) return;
+
+      const nodeEpoch = isoToEpochSeconds(node.timeStamp);
+      const nodeX = (nodeEpoch - offsetSec) / secPerPx;
+
+      // Only draw if node is visible
+      if (nodeX < -20 || nodeX > size.width + 20) return;
+
+      // Draw node circle with branch color
+      const branchColor = getBranchColor(node.branchId);
+      ctx.fillStyle = branchColor;
+      ctx.beginPath();
+      ctx.arc(nodeX, branchY, NODE_RADIUS, 0, 2 * Math.PI);
+      ctx.fill();
+      
+      // Draw node border
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Draw node label (shortened content)
+      const shortContent = node.content.length > 30 ? node.content.substring(0, 30) + '...' : node.content;
+      ctx.font = '12px Lora, serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillText(shortContent, nodeX, branchY + 15);
+    });
+
     // Red "today" line (unchanged)
     if (todayX >= 0 && todayX <= size.width) {
       ctx.strokeStyle = '#FF0000';
@@ -595,6 +747,93 @@ export default function Timeline() {
       draw();
     };
 
+    // Tooltip detection
+    const onMouseMoveForTooltip = (e: MouseEvent) => {
+      if (isDragging.current) return;
+      
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      
+      const centreY = size.height / 2 + offsetY.current;
+      const secPerPx = scaleSecPerPx.current;
+      const offsetSec = offsetEpochSec.current;
+      
+      // Calculate branch positions
+      const branchPositions = new Map<string, number>();
+      let branchIndex = 0;
+      branches.forEach(branch => {
+        const branchY = centreY + (branchIndex - Math.floor(branches.length / 2)) * BRANCH_SPACING;
+        branchPositions.set(branch.branchId, branchY);
+        branchIndex++;
+      });
+
+      let foundTooltip = false;
+
+      // Check for branch hover
+      branches.forEach(branch => {
+        const branchY = branchPositions.get(branch.branchId);
+        if (branchY === undefined) return;
+
+        const startEpoch = isoToEpochSeconds(branch.branchStart);
+        const endEpoch = branch.branchEnd ? isoToEpochSeconds(branch.branchEnd) : currentTime;
+        
+        const startX = (startEpoch - offsetSec) / secPerPx;
+        const endX = (endEpoch - offsetSec) / secPerPx;
+
+        // Check if mouse is over branch line
+        if (mouseX >= startX - 5 && mouseX <= endX + 5 && 
+            mouseY >= branchY - BRANCH_HEIGHT/2 && mouseY <= branchY + BRANCH_HEIGHT/2) {
+          
+          const tooltipContent = `
+            <strong>${branch.branchName}</strong><br/>
+            Start: ${formatDateForTooltip(branch.branchStart)}<br/>
+            ${branch.branchEnd ? `End: ${formatDateForTooltip(branch.branchEnd)}` : 'Ongoing'}<br/>
+            <em>${branch.branchSummary}</em>
+          `;
+          
+          setTooltip({
+            x: e.clientX + TOOLTIP_OFFSET,
+            y: e.clientY + TOOLTIP_OFFSET,
+            content: tooltipContent,
+            type: 'branch'
+          });
+          foundTooltip = true;
+        }
+      });
+
+      // Check for node hover
+      nodes.forEach(node => {
+        const branchY = branchPositions.get(node.branchId);
+        if (branchY === undefined) return;
+
+        const nodeEpoch = isoToEpochSeconds(node.timeStamp);
+        const nodeX = (nodeEpoch - offsetSec) / secPerPx;
+
+        // Check if mouse is over node circle
+        const distance = Math.sqrt((mouseX - nodeX) ** 2 + (mouseY - branchY) ** 2);
+        if (distance <= NODE_RADIUS + 5) {
+          const tooltipContent = `
+            <strong>Event</strong><br/>
+            Date: ${formatDateForTooltip(node.timeStamp)}<br/>
+            <em>${node.content}</em>
+          `;
+          
+          setTooltip({
+            x: e.clientX + TOOLTIP_OFFSET,
+            y: e.clientY + TOOLTIP_OFFSET,
+            content: tooltipContent,
+            type: 'node'
+          });
+          foundTooltip = true;
+        }
+      });
+
+      if (!foundTooltip) {
+        setTooltip(null);
+      }
+    };
+
     const endDrag = () => {
       if (isDragging.current) {
         isDragging.current = false;
@@ -656,19 +895,34 @@ export default function Timeline() {
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', endDrag);
     container.addEventListener('wheel', onWheel, { passive: false });
+    container.addEventListener('mousemove', onMouseMoveForTooltip);
 
     return () => {
       container.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', endDrag);
       container.removeEventListener('wheel', onWheel);
+      container.removeEventListener('mousemove', onMouseMoveForTooltip);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.width, size.height, currentTime]);
 
   return (
-    <div ref={containerRef} className="w-full h-full bg-black cursor-grab select-none font-lora">
+    <div ref={containerRef} className="w-full h-full bg-black cursor-grab select-none font-lora relative">
       <canvas ref={canvasRef} />
+      
+      {/* Tooltip */}
+      {tooltip && (
+        <div
+          className="absolute z-10 bg-gray-900 text-white p-3 rounded-lg shadow-lg text-sm max-w-xs pointer-events-none"
+          style={{
+            left: tooltip.x,
+            top: tooltip.y,
+            transform: 'translate(-50%, -100%)'
+          }}
+          dangerouslySetInnerHTML={{ __html: tooltip.content }}
+        />
+      )}
     </div>
   );
 } 
