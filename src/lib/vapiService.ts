@@ -1,199 +1,171 @@
-
 import { TreeService } from './treeService';
 import { Node, Branch } from '@/types/tree';
 
 export class VapiService {
-  private static vapi: VapiClient;
-
-  static initialize() {
-    if (!process.env.VAPI_API_KEY) {
-      throw new Error('VAPI_API_KEY is required');
-    }
-
-    this.vapi = new VapiClient({
-      token: process.env.VAPI_API_KEY
-    });
-  }
-
-  // Create the life tree assistant
-  static async createLifeTreeAssistant() {
-    if (!this.vapi) {
-      this.initialize();
-    }
-
-    try {
-      const assistant = await this.vapi.assistants.create({
-        name: "Life Tree Journal Assistant",
-        firstMessage: "Hello! I'm your personal life tree assistant. I can help you document your life experiences, memories, relationships, and achievements. What would you like to add to your life tree today?",
-        model: {
-          provider: "openai",
-          model: "gpt-4o",
-          temperature: 0.7,
-          messages: [{
-            role: "system",
-            content: `You are a compassionate and insightful life journaling assistant. Your role is to help users build a comprehensive tree of their life experiences, memories, and relationships.
-
-            You can help users:
-            - Add new life experiences, memories, and milestones as nodes
-            - Create branches to organize their life story
-            - Document relationships with people
-            - Record achievements and goals
-            - Capture emotions and feelings
-            - Add places and events
-            - Organize their life story chronologically
-            - Find patterns and connections in their life
-
-            Always be empathetic, encouraging, and help users reflect deeply on their experiences. Ask follow-up questions to get richer details when appropriate.
-
-            When adding content, try to extract:
-            - Relevant dates
-            - Locations
-            - People involved
-            - Emotions felt
-            - Lessons learned
-            - Impact on their life
-
-            Be conversational and make the user feel comfortable sharing their personal experiences.`
-          }]
-        },
-        voice: {
-          provider: "11labs",
-          voiceId: "21m00Tcm4TlvDq8ikWAM"
-        },
-        tools: [
-          {
-            name: "add_node",
-            description: "Add a new node with content to a branch",
-            parameters: {
-              type: "object",
-              properties: {
-                branchId: {
-                  type: "string",
-                  description: "ID of the branch to add the node to"
-                },
-                content: {
-                  type: "string",
-                  description: "Markdown content for the node"
-                }
-              },
-              required: ["branchId", "content"]
+  // Get Vapi tools configuration
+  static getVapiTools() {
+    return [
+      {
+        name: "add_node",
+        description: "Add a new node with content to a branch",
+        parameters: {
+          type: "object",
+          properties: {
+            branchId: {
+              type: "string",
+              description: "ID of the branch to add the node to"
+            },
+            content: {
+              type: "string",
+              description: "Markdown content for the node"
             }
           },
-          {
-            name: "add_branch",
-            description: "Add a new branch to organize content",
-            parameters: {
-              type: "object",
-              properties: {
-                parentBranchId: {
-                  type: "string",
-                  description: "ID of the parent branch (use 'root' for top level)"
-                },
-                branchName: {
-                  type: "string",
-                  description: "Name of the new branch"
-                },
-                branchSummary: {
-                  type: "string",
-                  description: "Summary description of what this branch contains"
-                }
-              },
-              required: ["parentBranchId", "branchName", "branchSummary"]
+          required: ["branchId", "content"]
+        }
+      },
+      {
+        name: "add_branch",
+        description: "Add a new branch to organize content",
+        parameters: {
+          type: "object",
+          properties: {
+            parentBranchId: {
+              type: "string",
+              description: "ID of the parent branch (use 'root' for top level)"
+            },
+            branchName: {
+              type: "string",
+              description: "Name of the new branch"
+            },
+            branchSummary: {
+              type: "string",
+              description: "Summary description of what this branch contains"
             }
           },
-          {
-            name: "search_nodes",
-            description: "Search for nodes by content",
-            parameters: {
-              type: "object",
-              properties: {
-                searchTerm: {
-                  type: "string",
-                  description: "Search term to find in node content"
-                }
-              },
-              required: ["searchTerm"]
+          required: ["parentBranchId", "branchName", "branchSummary"]
+        }
+      },
+      {
+        name: "fetch_tree",
+        description: "Get the entire tree structure with all branches and nodes",
+        parameters: {
+          type: "object",
+          properties: {}
+        }
+      },
+      {
+        name: "search_nodes",
+        description: "Search for nodes by content",
+        parameters: {
+          type: "object",
+          properties: {
+            searchTerm: {
+              type: "string",
+              description: "Search term to find in node content"
             }
           },
-          {
-            name: "get_stats",
-            description: "Get statistics about the life tree",
-            parameters: {
-              type: "object",
-              properties: {}
-            }
-          },
-          {
-            name: "get_recent_nodes",
-            description: "Get recent nodes from the life tree",
-            parameters: {
-              type: "object",
-              properties: {
-                limit: {
-                  type: "number",
-                  description: "Number of recent nodes to return (default: 5)"
-                }
-              }
-            }
-          },
-          {
-            name: "update_node",
-            description: "Update an existing node in the life tree",
-            parameters: {
-              type: "object",
-              properties: {
-                uuid: {
-                  type: "string",
-                  description: "UUID of the node to update"
-                },
-                content: {
-                  type: "string",
-                  description: "New content for the node"
-                }
-              },
-              required: ["uuid", "content"]
+          required: ["searchTerm"]
+        }
+      },
+      {
+        name: "get_stats",
+        description: "Get statistics about the life tree",
+        parameters: {
+          type: "object",
+          properties: {}
+        }
+      },
+      {
+        name: "get_recent_nodes",
+        description: "Get recent nodes from the life tree",
+        parameters: {
+          type: "object",
+          properties: {
+            limit: {
+              type: "number",
+              description: "Number of recent nodes to return (default: 5)"
             }
           }
-        ]
-      });
-
-      console.log('Life Tree Assistant created:', assistant.id);
-      return assistant;
-    } catch (error) {
-      console.error('Error creating assistant:', error);
-      throw error;
-    }
+        }
+      },
+      {
+        name: "update_node",
+        description: "Update an existing node in the life tree",
+        parameters: {
+          type: "object",
+          properties: {
+            uuid: {
+              type: "string",
+              description: "UUID of the node to update"
+            },
+            content: {
+              type: "string",
+              description: "New content for the node"
+            }
+          },
+          required: ["uuid", "content"]
+        }
+      }
+    ];
   }
 
   // Handle function calls from the assistant
   static handleFunctionCall(functionCall: any) {
-    const { name, arguments: args } = functionCall.toolCallList[0].function;
-    const parameters = args;
-    switch (name) {
-      case 'add_node':
-        return this.handleAddNode(parameters);
-      case 'add_branch':
-        return this.handleAddBranch(parameters);
-      case 'search_nodes':
-        return this.handleSearchNodes(parameters);
-      case 'get_stats':
-        return this.handleGetStats();
-      case 'get_recent_nodes':
-        return this.handleGetRecentNodes(parameters);
-      case 'update_node':
-        return this.handleUpdateNode(parameters);
-      default:
-        return {
-          success: false,
-          message: `Unknown function: ${name}`
-        };
+    const toolCallList = functionCall.toolCallList;
+    const results = [];
+
+    for (const toolCall of toolCallList) {
+      const { name, arguments: args } = toolCall.function;
+      const parameters = args;
+      console.log('Processing tool:', name);
+      
+      let result;
+      switch (name) {
+        case 'add_node':
+          result = this.handleAddNode(parameters);
+          break;
+        case 'add_branch':
+          result = this.handleAddBranch(parameters);
+          break;
+        case 'fetch_tree':
+          result = this.handleFetchTree();
+          break;
+        case 'search_nodes':
+          result = this.handleSearchNodes(parameters);
+          break;
+        case 'get_stats':
+          result = this.handleGetStats();
+          break;
+        case 'get_recent_nodes':
+          result = this.handleGetRecentNodes(parameters);
+          break;
+        case 'update_node':
+          result = this.handleUpdateNode(parameters);
+          break;
+        default:
+          result = {
+            success: false,
+            message: `Unknown function: ${name}`
+          };
+      }
+      
+      results.push({
+        toolCallId: toolCall.id,
+        result: result
+      });
     }
+
+    return {
+      results: results
+    };
   }
 
   private static handleAddNode(parameters: any) {
     const { branchId, content } = parameters;
-    
+    console.log('branchId', branchId);
+    console.log('content', content);
     const newNode = TreeService.addNode(branchId, content);
+    console.log('newNode', newNode);
     return {
       success: true,
       message: `Added new node to branch`,
@@ -209,6 +181,20 @@ export class VapiService {
       success: true,
       message: `Created new branch: ${branchName}`,
       branch: newBranch
+    };
+  }
+
+  private static handleFetchTree() {
+    const allBranches = TreeService.getAllBranches();
+    const allNodes = TreeService.getAllNodes();
+    const stats = TreeService.getStats();
+
+    return {
+      success: true,
+      message: `Retrieved your complete life tree with ${stats.totalNodes} nodes across ${stats.totalBranches} branches`,
+      branches: allBranches,
+      nodes: allNodes,
+      stats: stats,
     };
   }
 
