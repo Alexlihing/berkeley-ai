@@ -1,282 +1,243 @@
 import { v4 as uuidv4 } from 'uuid';
-import { LifeTreeNode, TreeStats, TreeSearchFilters, TreeAnalytics } from '@/types/tree';
+import { Node, Branch } from '@/types/tree';
 
-// In-memory storage (in production, use a database)
-const lifeTree: LifeTreeNode = {
-  id: 'root',
-  type: 'experience',
-  title: 'My Life Journey',
-  description: 'The story of my life',
-  importance: 'critical',
-  children: [],
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString()
-};
+// In-memory storage with hardcoded sample data
+const rootBranchId = 'root';
+const workBranchId = uuidv4();
+const personalBranchId = uuidv4();
+
+const branches: Branch[] = [
+  new Branch(
+    '', // no parent
+    rootBranchId,
+    new Date('2023-01-01').toISOString(),
+    '', // no end date for root
+    'Main',
+    'The main timeline of my life'
+  ),
+  new Branch(
+    rootBranchId,
+    workBranchId,
+    new Date('2023-03-01').toISOString(),
+    '', // Active branch
+    'Work Projects',
+    'Tracking all my work-related projects and tasks.'
+  ),
+  new Branch(
+    rootBranchId,
+    personalBranchId,
+    new Date('2023-04-01').toISOString(),
+    new Date('2023-06-30').toISOString(), // A completed branch
+    'Learn Guitar',
+    'My journey to learning how to play the guitar.'
+  ),
+];
+
+const nodes: Node[] = [
+  // Nodes for root branch
+  new Node(
+    uuidv4(),
+    rootBranchId,
+    new Date('2023-01-10').toISOString(),
+    'Started journaling my life like a git tree.',
+    false
+  ),
+  new Node(
+    uuidv4(),
+    rootBranchId,
+    new Date('2023-02-15').toISOString(),
+    'Had a great idea for a new project.',
+    false
+  ),
+  // Nodes for 'Work' branch
+  new Node(
+    uuidv4(),
+    workBranchId,
+    new Date('2023-03-05').toISOString(),
+    'Launched the alpha version of Project Phoenix.',
+    false
+  ),
+  new Node(
+    uuidv4(),
+    workBranchId,
+    new Date('2023-03-20').toISOString(),
+    'Finished user testing and gathered feedback.',
+    false
+  ),
+  // Nodes for 'Personal' branch
+  new Node(
+    uuidv4(),
+    personalBranchId,
+    new Date('2023-04-02').toISOString(),
+    'Bought my first acoustic guitar.',
+    false
+  ),
+  new Node(
+    uuidv4(),
+    personalBranchId,
+    new Date('2023-05-15').toISOString(),
+    'Can now play "Wonderwall".',
+    true // isUpdating
+  ),
+  new Node(
+    uuidv4(),
+    personalBranchId,
+    new Date('2023-06-30').toISOString(),
+    'Performed at an open mic night! Branch complete.',
+    false
+  ),
+];
 
 export class TreeService {
-  // Add a new node to the tree
-  static addNode(parentId: string, nodeData: Partial<LifeTreeNode>): LifeTreeNode {
-    const newNode: LifeTreeNode = {
-      id: uuidv4(),
-      type: nodeData.type || 'experience',
-      title: nodeData.title || 'Untitled',
-      description: nodeData.description || '',
-      date: nodeData.date,
-      location: nodeData.location,
-      people: nodeData.people || [],
-      emotions: nodeData.emotions || [],
-      tags: nodeData.tags || [],
-      importance: nodeData.importance || 'medium',
-      children: [],
-      metadata: nodeData.metadata || {},
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+  // Add a new node to a branch
+  static addNode(branchId: string, content: string): Node {
+    const newNode = new Node(
+      uuidv4(),
+      branchId,
+      new Date().toISOString(),
+      content,
+      false
+    );
 
-    if (parentId === 'root') {
-      lifeTree.children.push(newNode);
-    } else {
-      const parent = this.findNodeById(lifeTree, parentId);
-      if (parent) {
-        parent.children.push(newNode);
-      }
-    }
-
+    nodes.push(newNode);
     return newNode;
   }
 
-  // Find a node by ID
-  static findNodeById(node: LifeTreeNode, id: string): LifeTreeNode | null {
-    if (node.id === id) return node;
-    for (const child of node.children) {
-      const found = this.findNodeById(child, id);
-      if (found) return found;
-    }
-    return null;
+  // Find a node by UUID
+  static findNodeById(uuid: string): Node | null {
+    return nodes.find(node => node.uuid === uuid) || null;
   }
 
   // Update a node
-  static updateNode(nodeId: string, updates: Partial<LifeTreeNode>): LifeTreeNode | null {
-    const node = this.findNodeById(lifeTree, nodeId);
+  static updateNode(uuid: string, updates: Partial<Node>): Node | null {
+    const node = this.findNodeById(uuid);
     if (node) {
-      Object.assign(node, updates, { updatedAt: new Date().toISOString() });
+      Object.assign(node, updates, { timeStamp: new Date().toISOString() });
       return node;
     }
     return null;
   }
 
   // Delete a node
-  static deleteNode(nodeId: string): boolean {
-    return this.deleteNodeById(lifeTree, nodeId);
-  }
-
-  private static deleteNodeById(node: LifeTreeNode, id: string): boolean {
-    for (let i = 0; i < node.children.length; i++) {
-      if (node.children[i].id === id) {
-        node.children.splice(i, 1);
-        return true;
-      }
-      const deleted = this.deleteNodeById(node.children[i], id);
-      if (deleted) return deleted;
+  static deleteNode(uuid: string): boolean {
+    const index = nodes.findIndex(node => node.uuid === uuid);
+    if (index !== -1) {
+      nodes.splice(index, 1);
+      return true;
     }
     return false;
   }
 
-  // Get the entire tree
-  static getTree(): LifeTreeNode {
-    return lifeTree;
+  // Get all nodes
+  static getAllNodes(): Node[] {
+    return nodes;
   }
 
-  // Search nodes with filters
-  static searchNodes(filters: TreeSearchFilters): LifeTreeNode[] {
-    const results: LifeTreeNode[] = [];
-    this.searchNodesRecursive(lifeTree, filters, results);
-    return results;
+  // Get nodes by branch
+  static getNodesByBranch(branchId: string): Node[] {
+    return nodes.filter(node => node.branchId === branchId);
   }
 
-  private static searchNodesRecursive(node: LifeTreeNode, filters: TreeSearchFilters, results: LifeTreeNode[]): void {
-    // Apply filters
-    if (this.matchesFilters(node, filters)) {
-      results.push(node);
-    }
+  // Add a new branch
+  static addBranch(parentBranchId: string, branchName: string, branchSummary: string): Branch {
+    const newBranch = new Branch(
+      parentBranchId,
+      uuidv4(),
+      new Date().toISOString(),
+      '', // no end date initially
+      branchName,
+      branchSummary
+    );
 
-    // Recursively search children
-    for (const child of node.children) {
-      this.searchNodesRecursive(child, filters, results);
-    }
+    branches.push(newBranch);
+    return newBranch;
   }
 
-  private static matchesFilters(node: LifeTreeNode, filters: TreeSearchFilters): boolean {
-    if (filters.type && filters.type.length > 0 && !filters.type.includes(node.type)) {
-      return false;
-    }
+  // Find a branch by UUID
+  static findBranchById(branchId: string): Branch | null {
+    return branches.find(branch => branch.branchId === branchId) || null;
+  }
 
-    if (filters.importance && filters.importance.length > 0 && !filters.importance.includes(node.importance)) {
-      return false;
+  // Update a branch
+  static updateBranch(branchId: string, updates: Partial<Branch>): Branch | null {
+    const branch = this.findBranchById(branchId);
+    if (branch) {
+      Object.assign(branch, updates);
+      return branch;
     }
+    return null;
+  }
 
-    if (filters.dateRange && node.date) {
-      const nodeDate = new Date(node.date);
-      const startDate = new Date(filters.dateRange.start);
-      const endDate = new Date(filters.dateRange.end);
-      if (nodeDate < startDate || nodeDate > endDate) {
-        return false;
-      }
+  // Delete a branch and all its nodes
+  static deleteBranch(branchId: string): boolean {
+    const branchIndex = branches.findIndex(branch => branch.branchId === branchId);
+    if (branchIndex !== -1) {
+      // Delete all nodes in this branch
+      const nodesToDelete = nodes.filter(node => node.branchId === branchId);
+      nodesToDelete.forEach(node => {
+        const nodeIndex = nodes.findIndex(n => n.uuid === node.uuid);
+        if (nodeIndex !== -1) {
+          nodes.splice(nodeIndex, 1);
+        }
+      });
+
+      // Delete the branch
+      branches.splice(branchIndex, 1);
+      return true;
     }
+    return false;
+  }
 
-    if (filters.tags && filters.tags.length > 0) {
-      const hasMatchingTag = filters.tags.some(tag => node.tags?.includes(tag));
-      if (!hasMatchingTag) return false;
-    }
+  // Get all branches
+  static getAllBranches(): Branch[] {
+    return branches;
+  }
 
-    if (filters.people && filters.people.length > 0) {
-      const hasMatchingPerson = filters.people.some(person => node.people?.includes(person));
-      if (!hasMatchingPerson) return false;
-    }
+  // Get child branches of a parent branch
+  static getChildBranches(parentBranchId: string): Branch[] {
+    return branches.filter(branch => branch.parentBranchId === parentBranchId);
+  }
 
-    if (filters.emotions && filters.emotions.length > 0) {
-      const hasMatchingEmotion = filters.emotions.some(emotion => node.emotions?.includes(emotion));
-      if (!hasMatchingEmotion) return false;
-    }
+  // Get branch hierarchy (tree structure)
+  static getBranchHierarchy(): Branch[] {
+    return branches;
+  }
 
-    return true;
+  // Search nodes by content
+  static searchNodesByContent(searchTerm: string): Node[] {
+    return nodes.filter(node => 
+      node.content.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }
+
+  // Get recent nodes
+  static getRecentNodes(limit: number = 10): Node[] {
+    return nodes
+      .sort((a, b) => new Date(b.timeStamp).getTime() - new Date(a.timeStamp).getTime())
+      .slice(0, limit);
+  }
+
+  // Get nodes by date range
+  static getNodesByDateRange(startDate: string, endDate: string): Node[] {
+    return nodes.filter(node => {
+      const nodeDate = new Date(node.timeStamp);
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      return nodeDate >= start && nodeDate <= end;
+    });
   }
 
   // Get tree statistics
-  static getStats(): TreeStats {
-    const stats: TreeStats = {
-      totalNodes: 0,
-      byType: {},
-      byImportance: {},
-      byYear: {},
-      recentActivity: []
+  static getStats() {
+    return {
+      totalNodes: nodes.length,
+      totalBranches: branches.length,
+      nodesByBranch: branches.map(branch => ({
+        branchId: branch.branchId,
+        branchName: branch.branchName,
+        nodeCount: this.getNodesByBranch(branch.branchId).length
+      })),
+      recentActivity: this.getRecentNodes(5)
     };
-
-    this.calculateStatsRecursive(lifeTree, stats);
-    
-    // Get recent activity (last 10 nodes)
-    const allNodes: LifeTreeNode[] = [];
-    this.getAllNodesRecursive(lifeTree, allNodes);
-    stats.recentActivity = allNodes
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-      .slice(0, 10);
-
-    return stats;
-  }
-
-  private static calculateStatsRecursive(node: LifeTreeNode, stats: TreeStats): void {
-    stats.totalNodes++;
-    
-    // Count by type
-    stats.byType[node.type] = (stats.byType[node.type] || 0) + 1;
-    
-    // Count by importance
-    stats.byImportance[node.importance] = (stats.byImportance[node.importance] || 0) + 1;
-    
-    // Count by year
-    if (node.date) {
-      const year = new Date(node.date).getFullYear().toString();
-      stats.byYear[year] = (stats.byYear[year] || 0) + 1;
-    }
-
-    // Recursively process children
-    for (const child of node.children) {
-      this.calculateStatsRecursive(child, stats);
-    }
-  }
-
-  private static getAllNodesRecursive(node: LifeTreeNode, allNodes: LifeTreeNode[]): void {
-    allNodes.push(node);
-    for (const child of node.children) {
-      this.getAllNodesRecursive(child, allNodes);
-    }
-  }
-
-  // Get analytics data
-  static getAnalytics(): TreeAnalytics {
-    const allNodes: LifeTreeNode[] = [];
-    this.getAllNodesRecursive(lifeTree, allNodes);
-
-    // Timeline analytics
-    const timelineMap = new Map<string, { count: number; types: Record<string, number> }>();
-    allNodes.forEach(node => {
-      if (node.date) {
-        const year = new Date(node.date).getFullYear().toString();
-        const existing = timelineMap.get(year) || { count: 0, types: {} };
-        existing.count++;
-        existing.types[node.type] = (existing.types[node.type] || 0) + 1;
-        timelineMap.set(year, existing);
-      }
-    });
-
-    const timeline = Array.from(timelineMap.entries()).map(([year, data]) => ({
-      year,
-      count: data.count,
-      types: data.types
-    })).sort((a, b) => parseInt(a.year) - parseInt(b.year));
-
-    // Relationship analytics
-    const peopleMap = new Map<string, { name: string; experiences: string[] }>();
-    allNodes.forEach(node => {
-      node.people?.forEach(personId => {
-        const existing = peopleMap.get(personId) || { name: personId, experiences: [] };
-        existing.experiences.push(node.id);
-        peopleMap.set(personId, existing);
-      });
-    });
-
-    const relationships = Array.from(peopleMap.entries()).map(([personId, data]) => ({
-      personId,
-      personName: data.name,
-      connectionCount: data.experiences.length,
-      sharedExperiences: data.experiences
-    })).sort((a, b) => b.connectionCount - a.connectionCount);
-
-    // Growth analytics (last 12 months)
-    const now = new Date();
-    const growth = [];
-    for (let i = 11; i >= 0; i--) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const monthStart = date.toISOString();
-      const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0).toISOString();
-      
-      const monthNodes = allNodes.filter(node => 
-        node.createdAt >= monthStart && node.createdAt <= monthEnd
-      );
-
-      growth.push({
-        period: date.toLocaleDateString('en-US', { year: 'numeric', month: 'short' }),
-        newNodes: monthNodes.length,
-        growthRate: i === 11 ? 0 : monthNodes.length // Simplified growth rate
-      });
-    }
-
-    return { timeline, relationships, growth };
-  }
-
-  // Get nodes by type
-  static getNodesByType(type: string): LifeTreeNode[] {
-    const results: LifeTreeNode[] = [];
-    this.getNodesByTypeRecursive(lifeTree, type, results);
-    return results;
-  }
-
-  private static getNodesByTypeRecursive(node: LifeTreeNode, type: string, results: LifeTreeNode[]): void {
-    if (node.type === type) {
-      results.push(node);
-    }
-    for (const child of node.children) {
-      this.getNodesByTypeRecursive(child, type, results);
-    }
-  }
-
-  // Get timeline of events
-  static getTimeline(): LifeTreeNode[] {
-    const allNodes: LifeTreeNode[] = [];
-    this.getAllNodesRecursive(lifeTree, allNodes);
-    
-    return allNodes
-      .filter(node => node.date)
-      .sort((a, b) => new Date(a.date!).getTime() - new Date(b.date!).getTime());
   }
 } 
