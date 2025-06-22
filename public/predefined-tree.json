@@ -1,0 +1,106 @@
+{
+  "branches": [
+    {
+      "parentBranchId": null,
+      "branchId": "root",
+      "branchStart": "1970-01-01",
+      "branchEnd": null,
+      "branchName": "Main",
+      "branchSummary": "The main timeline of your life."
+    },
+    {
+      "parentBranchId": "root",
+      "branchId": "mit-branch-uuid",
+      "branchStart": "2002-09-01",
+      "branchEnd": "2006-06-01",
+      "branchName": "MIT Undergrad",
+      "branchSummary": "Studied physics at MIT."
+    },
+    {
+      "parentBranchId": "mit-branch-uuid",
+      "branchId": "frat-branch-uuid",
+      "branchStart": "2003-09-01",
+      "branchEnd": "2004-06-01",
+      "branchName": "Fraternity",
+      "branchSummary": "Joined a fraternity during MIT."
+    },
+    {
+      "parentBranchId": "frat-branch-uuid",
+      "branchId": "frat-branch-uuid2",
+      "branchStart": "2003-12-01",
+      "branchEnd": "2004-02-01",
+      "branchName": "Fraternity 2",
+      "branchSummary": "Joined a fraternity during MIT."
+    },
+    {
+      "parentBranchId": "root",
+      "branchId": "phd-branch-uuid",
+      "branchStart": "2010-09-01",
+      "branchEnd": "2018-06-01",
+      "branchName": "Caltech PhD",
+      "branchSummary": "Physics PhD at Caltech."
+    },
+    {
+      "parentBranchId": "root",
+      "branchId": "relationship-branch-uuid",
+      "branchStart": "2004-03-15",
+      "branchEnd": null,
+      "branchName": "Long-term Relationship",
+      "branchSummary": "A committed relationship that has lasted over 20 years."
+    },
+    {
+      "parentBranchId": "root",
+      "branchId": "relationship-branch-uuid2",
+      "branchStart": "1990-05-20",
+      "branchEnd": "1995-08-12",
+      "branchName": "First Love",
+      "branchSummary": "An intense and formative relationship in the early twenties."
+    },
+    {
+      "parentBranchId": "root",
+      "branchId": "relationship-branch-uuid3",
+      "branchStart": "1998-02-14",
+      "branchEnd": "2001-11-01",
+      "branchName": "Relationship in Late 20s",
+      "branchSummary": "A serious relationship before deciding to go back to school."
+    },
+    {
+      "parentBranchId": "root",
+      "branchId": "test-branch-uuid",
+      "branchStart": "2005-03-15",
+      "branchEnd": "2007-05-15",
+      "branchName": "Test Branch",
+      "branchSummary": "A test branch."
+    }
+  ],
+  "nodes": [
+    {
+      "uuid": "research-award-node",
+      "branchId": "mit-branch-uuid",
+      "timeStamp": "2005-05-15",
+      "content": "Received research award",
+      "isUpdating": false
+    },
+    {
+      "uuid": "relationship-milestone-1",
+      "branchId": "relationship-branch-uuid",
+      "timeStamp": "2008-06-20",
+      "content": "We had our first date and it was really nice. We drank boba and went to the library. What a fun day we had!",
+      "isUpdating": false
+    },
+    {
+      "uuid": "relationship-milestone-2",
+      "branchId": "relationship-branch-uuid",
+      "timeStamp": "2015-09-10",
+      "content": "Another significant moment",
+      "isUpdating": false
+    },
+    {
+      "uuid": "birthday-node",
+      "branchId": "root",
+      "timeStamp": "1970-01-01",
+      "content": "Birthday",
+      "isUpdating": false
+    }
+  ]
+} 

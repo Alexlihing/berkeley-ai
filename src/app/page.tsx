@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Vapi from '@vapi-ai/web';
 import Timeline from '@/components/Timeline';
+import DevTools from '@/components/DevTools';
 
 interface Recommendation {
   id: string;
@@ -671,6 +672,12 @@ export default function Home() {
         branches={branches}
         loading={loadingNodes || loadingBranches}
         onSlidingStateChange={() => setSlidingStateVersion(v => v + 1)}
+      />
+      
+      <DevTools 
+        nodes={nodes}
+        branches={branches}
+        loading={loadingNodes || loadingBranches}
       />
       
       {/* View Mode Toggle */}
