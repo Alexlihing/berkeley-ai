@@ -24,6 +24,7 @@ export const FRAT_BRANCH = 'frat-branch-uuid';
 export const PHD_BRANCH = 'phd-branch-uuid';
 export const RELATIONSHIP_BRANCH = 'relationship-branch-uuid';
 export const RELATIONSHIP_BRANCH2 = 'relationship-branch-uuid2';
+export const RELATIONSHIP_BRANCH3 = 'relationship-branch-uuid3';
 
 // Branches
 export const branches: Branch[] = [
@@ -66,6 +67,22 @@ export const branches: Branch[] = [
     branchEnd: null, // Ongoing relationship
     branchName: 'Long-term Relationship',
     branchSummary: 'A committed relationship that has lasted over 20 years.',
+  },
+  {
+    parentBranchId: MAIN_BRANCH,
+    branchId: RELATIONSHIP_BRANCH2,
+    branchStart: '1990-05-20',
+    branchEnd: '1995-08-12',
+    branchName: 'First Love',
+    branchSummary: 'An intense and formative relationship in the early twenties.',
+  },
+  {
+    parentBranchId: MAIN_BRANCH,
+    branchId: RELATIONSHIP_BRANCH3,
+    branchStart: '1998-02-14',
+    branchEnd: '2001-11-01',
+    branchName: 'Relationship in Late 20s',
+    branchSummary: 'A serious relationship before deciding to go back to school.',
   }
 ];
 

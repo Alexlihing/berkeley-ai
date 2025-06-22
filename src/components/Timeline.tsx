@@ -25,40 +25,65 @@ const MIN_VELOCITY = 0.1; // Lower threshold for longer gliding
 const BRANCH_SPACING = 60; // pixels between branches
 const BRANCH_HEIGHT = 4; // height of branch line
 const NODE_RADIUS = 6; // radius of node circles
-const MIN_MARKER_SPACING = 60; // px at which markers are fully visible
-const FADE_RANGE = 30;         // px range over which they fade out
 const TOOLTIP_OFFSET = 10; // pixels offset for tooltip
+const CONNECTOR_ARC_RADIUS = 10; // radius of the 90-degree arc in connectors
 
-// Branch colors - consistent red, purple, blue shades
+// Branch colors - more diverse palette with better variance
 const BRANCH_COLORS = [
   '#DC2626', // Red
-  '#B91C1C', // Red
-  '#991B1B', // Red
-  '#7F1D1D', // Red
+  '#B91C1C', // Dark Red
+  '#7F1D1D', // Very Dark Red
   '#8B5CF6', // Purple
   '#7C3AED', // Violet
   '#6D28D9', // Purple
-  '#5B21B6', // Purple
-  '#4C1D95', // Purple
+  '#4C1D95', // Dark Purple
   '#3730A3', // Indigo
   '#1E40AF', // Blue
   '#1D4ED8', // Blue
   '#2563EB', // Blue
-  '#3B82F6', // Blue
-  '#0EA5E9', // Sky blue
+  '#3B82F6', // Light Blue
+  '#0EA5E9', // Sky Blue
+  '#0891B2', // Cyan
+  '#0D9488', // Teal
+  '#059669', // Emerald
+  '#16A34A', // Green
+  '#65A30D', // Lime
+  '#84CC16', // Light Green
+  '#EAB308', // Yellow
+  '#F59E0B', // Amber
+  '#F97316', // Orange
+  '#EA580C', // Dark Orange
+  '#DC2626', // Red (cycle back)
+  '#EF4444', // Light Red
+  '#F87171', // Lighter Red
+  '#FCA5A5', // Very Light Red
+  '#FECACA', // Pink
+  '#F9A8D4', // Pink
+  '#EC4899', // Rose
+  '#BE185D', // Dark Rose
+  '#831843', // Very Dark Rose
 ];
 
-// Function to get consistent color for a branch
+// Function to get consistent color for a branch with better variance
 function getBranchColor(branchId: string): string {
-  // Simple hash function to get consistent index
+  // More complex hash function for better distribution
   let hash = 0;
   for (let i = 0; i < branchId.length; i++) {
     const char = branchId.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
     hash = hash & hash; // Convert to 32-bit integer
   }
-  const index = Math.abs(hash) % BRANCH_COLORS.length;
-  return BRANCH_COLORS[index];
+  
+  // Use modulo to get index, but add some additional variance
+  const baseIndex = Math.abs(hash) % BRANCH_COLORS.length;
+  
+  // Add additional variance based on string length and character sum
+  const charSum = branchId.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const varianceOffset = (charSum % 7) - 3; // -3 to +3 offset
+  
+  const finalIndex = (baseIndex + varianceOffset + BRANCH_COLORS.length) % BRANCH_COLORS.length;
+  
+  return BRANCH_COLORS[finalIndex];
 }
 
 // Candidate tick spacings (in seconds) ordered from fine → coarse
@@ -263,6 +288,100 @@ function formatLabel(epochSec: number, stepSec: number) {
   return date.getFullYear().toString(); // Use local timezone
 }
 
+/**
+ * Draws a curved connector from a parent branch to a child branch at the start of the child branch.
+ * The path is a vertical line from the parent, which then arcs 90 degrees into the child's horizontal line.
+ * @returns The new starting X coordinate for the horizontal branch line.
+ */
+function drawCurvedConnector(
+  ctx: CanvasRenderingContext2D,
+  x: number, // The timestamp x-position for the connection
+  parentY: number,
+  childY: number,
+  color: string,
+  lineWidth: number
+): number {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
+  ctx.lineCap = 'round';
+
+  const isGoingUp = childY < parentY;
+  const arcRadius = CONNECTOR_ARC_RADIUS;
+
+  // If distance is too small for an arc, draw a straight line.
+  if (Math.abs(childY - parentY) < arcRadius) {
+    ctx.beginPath();
+    ctx.moveTo(x, parentY);
+    ctx.lineTo(x, childY);
+    ctx.stroke();
+    return x; // No change in x
+  }
+
+  ctx.beginPath();
+  if (isGoingUp) {
+    // 1. Vertical line from parent up towards child
+    ctx.moveTo(x, parentY);
+    ctx.lineTo(x, childY + arcRadius);
+    // 2. 90-degree arc turning right
+    ctx.arc(x + arcRadius, childY + arcRadius, arcRadius, Math.PI, 1.5 * Math.PI, false);
+  } else { // Going down
+    // 1. Vertical line from parent down towards child
+    ctx.moveTo(x, parentY);
+    ctx.lineTo(x, childY - arcRadius);
+    // 2. 90-degree arc turning right
+    ctx.arc(x + arcRadius, childY - arcRadius, arcRadius, Math.PI, 0.5 * Math.PI, true);
+  }
+  ctx.stroke();
+
+  // The horizontal line of the branch will now start after the arc.
+  return x + arcRadius;
+}
+
+
+/**
+ * Draws a curved connector from a child branch back to its parent at the end of the child branch.
+ * The path is a horizontal line that arcs 90 degrees into a vertical line to the parent.
+ * @returns The new ending X coordinate for the horizontal branch line.
+ */
+function drawCurvedEndConnector(
+  ctx: CanvasRenderingContext2D,
+  x: number, // The timestamp x-position for the connection
+  parentY: number,
+  childY: number,
+  color: string,
+  lineWidth: number
+): number {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
+  ctx.lineCap = 'round';
+
+  const arcRadius = CONNECTOR_ARC_RADIUS;
+  // The horizontal line of the branch should end before the curve starts.
+  const branchLineEndX = x - arcRadius;
+
+  if (Math.abs(childY - parentY) < arcRadius) {
+    // Fallback to a straight line if there isn't enough vertical space for an arc.
+    ctx.beginPath();
+    ctx.moveTo(x, childY);
+    ctx.lineTo(x, parentY);
+    ctx.stroke();
+    return x;
+  }
+  
+  ctx.beginPath();
+  // We start drawing from the end of the horizontal branch line.
+  ctx.moveTo(branchLineEndX, childY);
+  // arcTo will create a rounded corner at (x, childY) that curves towards the vertical line.
+  ctx.arcTo(x, childY, x, parentY, arcRadius);
+  // After the arc, continue the line to the parent's y-position.
+  ctx.lineTo(x, parentY);
+  ctx.stroke();
+
+  // Return the calculated end point for the horizontal branch line.
+  return branchLineEndX;
+}
+
+
 export default function Timeline() {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -315,10 +434,6 @@ export default function Timeline() {
   const lastDragTime = useRef<number>(0);
   const lastDragX = useRef<number>(0);
   const lastDragY = useRef<number>(0);
-
-  // Store latest branch Y-positions so other handlers (e.g., tooltip) can use them without
-  // recomputing the physics layout on every mouse-move.
-  const branchPositionsRef = useRef<Map<string, number>>(new Map());
 
   // Update current time every minute
   useEffect(() => {
@@ -460,7 +575,7 @@ export default function Timeline() {
 
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.width]);
+  }, [size.width, currentTime]);
 
   // Cleanup animation on unmount
   useEffect(() => {
@@ -590,145 +705,57 @@ export default function Timeline() {
     // Reset alpha
     ctx.globalAlpha = 1;
 
-    /* ------------------------------------------------------------------
-       Marker collection helpers (must be initialised before any markers
-       are pushed during branch/node drawing further below).
-    ------------------------------------------------------------------*/
-    type Marker = {
-      branchId: string;
-      x: number;
-      y: number;
-      type: 'start' | 'end' | 'node';
-      label?: string;
-      color: string;
-    };
-
-    const markersByBranch: Map<string, Marker[]> = new Map();
-
-    function pushMarker(m: Marker) {
-      let arr = markersByBranch.get(m.branchId);
-      if (!arr) {
-        arr = [];
-        markersByBranch.set(m.branchId, arr);
-      }
-      arr.push(m);
-    }
-
     // ───────────────────────── Branch and Node Visualization ─────────────────────────
     
-    // ─── Physics-based layout to determine branch Y-positions ───
+    // Calculate branch positions (vertical spacing) with improved distribution
     const branchPositions = new Map<string, number>();
-    branchPositions.set(MAIN_BRANCH, centreY); // main branch is fixed
+    const branchSide = new Map<string, 'above' | 'below'>(); // Track which side each branch is on
 
-    // Build child map for alternating initial placement
-    const childrenMap = new Map<string, Branch[]>();
-    branches.forEach(br => {
-      if (br.parentBranchId) {
-        if (!childrenMap.has(br.parentBranchId)) childrenMap.set(br.parentBranchId, []);
-        childrenMap.get(br.parentBranchId)!.push(br);
-      }
+    // Place the main "Life" branch at center
+    branchPositions.set(MAIN_BRANCH, centreY);
+    branchSide.set(MAIN_BRANCH, 'above'); // Main branch doesn't need special text positioning
+
+    // Get all non-main branches
+    const otherBranches = branches.filter(b => b.branchId !== MAIN_BRANCH);
+    
+    // Sort branches by start date for more logical distribution
+    otherBranches.sort((a, b) => {
+      const aStart = isoToEpochSeconds(a.branchStart);
+      const bStart = isoToEpochSeconds(b.branchStart);
+      return aStart - bStart;
     });
 
-    // BFS: for children of main branch, alternate up/down around centre.
-    // For deeper levels, place children further "outward" away from the centre line
-    // (i.e. same vertical direction as their parent relative to centre).
-    const queue: string[] = [MAIN_BRANCH];
-    while (queue.length) {
-      const parentId = queue.shift()!;
-      const parentY = branchPositions.get(parentId)!;
-      const children = childrenMap.get(parentId) || [];
-
-      // Determine the outward direction of the parent (w.r.t. centre)
-      const parentDir = parentId === MAIN_BRANCH ? 0 : (parentY >= centreY ? 1 : -1);
-
-      children.forEach((child, idx) => {
-        let dir: number;
-        if (parentId === MAIN_BRANCH) {
-          // Alternate directly above / below the centre for first-level branches
-          dir = idx % 2 === 0 ? -1 : 1;
-        } else {
-          // Place all deeper children further outwards in the same direction as parent
-          dir = parentDir === 0 ? (idx % 2 === 0 ? -1 : 1) : parentDir;
-        }
-
-        const y = parentY + dir * BRANCH_SPACING;
-        branchPositions.set(child.branchId, y);
-        queue.push(child.branchId);
-      });
-    }
-
-    // Physics simulation parameters
-    const ITERATIONS = 40;
-    const SPRING_K = 0.35;      // stronger spring keeps branch near parent
-    const REPULSION_K = 2000;   // moderate repulsion constant (pixels^3)
-    const TIME_STEP = 0.2;      // integration step for position update
-
-    // Pre-compute start/end epochs for each branch for overlap tests
-    const branchExtent = new Map<string, {start: number; end: number}>();
-    branches.forEach(br => {
-      const start = isoToEpochSeconds(br.branchStart);
-      const end = br.branchEnd ? isoToEpochSeconds(br.branchEnd) : currentTime;
-      branchExtent.set(br.branchId, { start, end });
-    });
-
-    // Simulate
-    for (let iter = 0; iter < ITERATIONS; iter++) {
-      const forces = new Map<string, number>(); // accum y-forces per branch
-
-      // Repulsive forces between overlapping branches
-      for (let i = 0; i < branches.length; i++) {
-        for (let j = i + 1; j < branches.length; j++) {
-          const bi = branches[i];
-          const bj = branches[j];
-
-          // Skip if either branch missing position (should not happen)
-          const y1 = branchPositions.get(bi.branchId);
-          const y2 = branchPositions.get(bj.branchId);
-          if (y1 === undefined || y2 === undefined) continue;
-
-          // Only consider repulsion if their lifespans overlap
-          const ext1 = branchExtent.get(bi.branchId)!;
-          const ext2 = branchExtent.get(bj.branchId)!;
-          const overlapStart = Math.max(ext1.start, ext2.start);
-          const overlapEnd = Math.min(ext1.end, ext2.end);
-          if (overlapEnd <= overlapStart) continue; // no temporal overlap
-
-          const dy = y1 - y2;
-          const dist = Math.abs(dy) + 1; // avoid division by zero
-
-          // Repulsive force inversely proportional to distance squared
-          const f = REPULSION_K / (dist * dist);
-          const dir = dy >= 0 ? 1 : -1; // push apart
-
-          forces.set(bi.branchId, (forces.get(bi.branchId) || 0) + f * dir);
-          forces.set(bj.branchId, (forces.get(bj.branchId) || 0) - f * dir);
-        }
+    // Distribute branches above and below the main branch
+    // Use alternating pattern but also consider branch relationships
+    otherBranches.forEach((branch, idx) => {
+      // Determine if branch should go above or below
+      // Use a pattern that alternates but also considers branch relationships
+      let side: 'above' | 'below';
+      
+      if (branch.parentBranchId === MAIN_BRANCH) {
+        // Direct children of main branch alternate above/below
+        side = idx % 2 === 0 ? 'above' : 'below';
+      } else {
+        // Sub-branches (like fraternity under MIT) go on the same side as their parent
+        const parentSide = branchSide.get(branch.parentBranchId!);
+        side = parentSide || 'above'; // Default to above for sub-branches
       }
-
-      // Spring forces toward preferred offset relative to parent
-      branches.forEach(br => {
-        if (br.branchId === MAIN_BRANCH) return; // main fixed
-        const parentY = branchPositions.get(br.parentBranchId!);
-        const y = branchPositions.get(br.branchId);
-        if (parentY === undefined || y === undefined) return;
-
-        const dir = y >= parentY ? 1 : -1; // current side (above/below)
-        const desiredY = parentY + dir * BRANCH_SPACING;
-        const springF = SPRING_K * (desiredY - y);
-        forces.set(br.branchId, (forces.get(br.branchId) || 0) + springF);
-      });
-
-      // Integrate positions (Euler)
-      branches.forEach(br => {
-        if (br.branchId === MAIN_BRANCH) return; // main stays fixed
-        const y = branchPositions.get(br.branchId)!;
-        const fy = forces.get(br.branchId) || 0;
-        branchPositions.set(br.branchId, y + fy * TIME_STEP);
-      });
-    }
-
-    // Store for tooltip access
-    branchPositionsRef.current = branchPositions;
+      
+      branchSide.set(branch.branchId, side);
+      
+      // Calculate vertical position
+      // Count how many branches are already on this side
+      const branchesOnSameSide = otherBranches
+        .slice(0, idx)
+        .filter(b => branchSide.get(b.branchId) === side).length;
+      
+      const branchIndex = branchesOnSameSide + 1; // +1 because we start counting from 1
+      const branchY = side === 'above' 
+        ? centreY - branchIndex * BRANCH_SPACING
+        : centreY + branchIndex * BRANCH_SPACING;
+      
+      branchPositions.set(branch.branchId, branchY);
+    });
 
     // Draw branches (skip the main "Life" branch so its line is invisible)
     branches.forEach(branch => {
@@ -737,81 +764,98 @@ export default function Timeline() {
       }
 
       const branchY = branchPositions.get(branch.branchId);
-      if (branchY === undefined) return;
+      const side = branchSide.get(branch.branchId);
+      if (branchY === undefined || side === undefined) return;
 
       const startEpoch = isoToEpochSeconds(branch.branchStart);
       const endEpoch = branch.branchEnd ? isoToEpochSeconds(branch.branchEnd) : currentTime;
       
-      const startX = (startEpoch - offsetSec) / secPerPx;
-      const endX = (endEpoch - offsetSec) / secPerPx;
+      let startX = (startEpoch - offsetSec) / secPerPx;
+      let endX = (endEpoch - offsetSec) / secPerPx;
 
       // Only draw if branch is visible
-      if (endX < -50 || startX > size.width + 50) return;
+      if (endX < 0 || startX > size.width) return;
+      
+      let finalStartX = startX;
+      let finalEndX = endX;
 
-      // ------------------ NEW DRAWING LOGIC ------------------
+      // Draw perpendicular connector to parent branch at start
+      const parentBranchId = branch.parentBranchId;
+      if (parentBranchId) {
+        const parentBranchY = branchPositions.get(parentBranchId);
+        if (parentBranchY !== undefined && parentBranchY !== null) {
+          
+          // Draw connector at start point and get new start for the horizontal line
+          if (startX >= 0 && startX <= size.width) {
+             finalStartX = drawCurvedConnector(ctx, startX, parentBranchY, branchY, getBranchColor(branch.branchId), BRANCH_HEIGHT);
+          }
+          
+          // Draw connector at end point (if branch has an end)
+          if (branch.branchEnd && endX >= 0 && endX <= size.width) {
+            finalEndX = drawCurvedEndConnector(ctx, endX, parentBranchY, branchY, getBranchColor(branch.branchId), BRANCH_HEIGHT);
+          }
+        }
+      }
+
+      // Draw branch line, adjusted for the connectors
       ctx.strokeStyle = getBranchColor(branch.branchId);
       ctx.lineWidth = BRANCH_HEIGHT;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-
-      const parentY = branch.parentBranchId ? branchPositions.get(branch.parentBranchId) : undefined;
-
       ctx.beginPath();
-      if (parentY !== undefined) {
-        // Move from parent Y to child Y then horizontal
-        ctx.moveTo(startX, parentY);
-        ctx.lineTo(startX, branchY);
-      } else {
-        ctx.moveTo(startX, branchY);
-      }
-      ctx.lineTo(Math.min(size.width, endX), branchY);
+      ctx.moveTo(Math.max(0, finalStartX), branchY);
+      ctx.lineTo(Math.min(size.width, finalEndX), branchY);
       ctx.stroke();
 
-      // Register start marker for spacing logic
+      // Draw branch start marker
       if (startX >= -10 && startX <= size.width + 10) {
-        pushMarker({
-          branchId: branch.branchId,
-          x: startX,
-          y: parentY !== undefined ? parentY : branchY,
-          type: 'start',
-          label: branch.branchName,
-          color: getBranchColor(branch.branchId),
-        });
-      } else if (startX < -10 && endX > 0) {
-        // If off-screen, still draw the branch label at left edge (no fade needed)
+        // Draw marker on parent branch position
+        const parentBranchId = branch.parentBranchId;
+        const parentBranchY = parentBranchId ? branchPositions.get(parentBranchId) : branchY;
+        const markerY = parentBranchY !== undefined ? parentBranchY : branchY;
+        
+        ctx.fillStyle = getBranchColor(branch.branchId);
+        ctx.beginPath();
+        ctx.arc(startX, markerY, 8, 0, 2 * Math.PI);
+        ctx.fill();
+        
+        // Branch name label - position based on side
         ctx.font = '14px Lora, serif';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = getBranchColor(branch.branchId);
-        ctx.fillText(branch.branchName, 0, branchY - 20);
+        
+        const labelY = side === 'above' ? branchY - 20 : branchY + 20;
+        ctx.fillText(branch.branchName, startX, labelY);
+      } else if (startX < -10 && endX > 0) {
+        // Start node is off-screen to the left, but branch line is still visible
+        // Position label at left edge of window
+        ctx.font = '14px Lora, serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = getBranchColor(branch.branchId);
+        
+        const labelY = side === 'above' ? branchY - 20 : branchY + 20;
+        ctx.fillText(branch.branchName, 0, labelY);
       }
 
-      // Register branch end marker (if branch ends)
+      // Draw branch end marker (if not ongoing)
       if (branch.branchEnd && endX >= -10 && endX <= size.width + 10) {
-        const mergeY = parentY !== undefined ? parentY : branchY;
-        // Vertical connector remains drawn immediately (to keep crisp line)
-        if (parentY !== undefined) {
-          ctx.strokeStyle = getBranchColor(branch.branchId);
-          ctx.lineWidth = BRANCH_HEIGHT;
-          ctx.beginPath();
-          ctx.moveTo(endX, branchY);
-          ctx.lineTo(endX, mergeY);
-          ctx.stroke();
-        }
-        pushMarker({
-          branchId: branch.branchId,
-          x: endX,
-          y: mergeY,
-          type: 'end',
-          color: getBranchColor(branch.branchId),
-        });
+        // Draw marker on parent branch position
+        const parentBranchId = branch.parentBranchId;
+        const parentBranchY = parentBranchId ? branchPositions.get(parentBranchId) : branchY;
+        const markerY = parentBranchY !== undefined ? parentBranchY : branchY;
+        
+        ctx.fillStyle = getBranchColor(branch.branchId);
+        ctx.beginPath();
+        ctx.arc(endX, markerY, 8, 0, 2 * Math.PI);
+        ctx.fill();
       }
     });
 
     // Draw nodes
     nodes.forEach(node => {
       const branchY = branchPositions.get(node.branchId);
-      if (branchY === undefined) return;
+      const side = branchSide.get(node.branchId);
+      if (branchY === undefined || side === undefined) return;
 
       const nodeEpoch = isoToEpochSeconds(node.timeStamp);
       const nodeX = (nodeEpoch - offsetSec) / secPerPx;
@@ -819,17 +863,27 @@ export default function Timeline() {
       // Only draw if node is visible
       if (nodeX < -20 || nodeX > size.width + 20) return;
 
-      // Register node marker for spacing logic
+      // Draw node circle with branch color
       const branchColor = getBranchColor(node.branchId);
+      ctx.fillStyle = branchColor;
+      ctx.beginPath();
+      ctx.arc(nodeX, branchY, NODE_RADIUS, 0, 2 * Math.PI);
+      ctx.fill();
+      
+      // Draw node border
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Draw node label - position based on side
       const shortContent = node.content.length > 30 ? node.content.substring(0, 30) + '...' : node.content;
-      pushMarker({
-        branchId: node.branchId,
-        x: nodeX,
-        y: branchY,
-        type: 'node',
-        label: shortContent,
-        color: branchColor,
-      });
+      ctx.font = '12px Lora, serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = side === 'above' ? 'top' : 'bottom';
+      ctx.fillStyle = '#FFFFFF';
+      
+      const labelY = side === 'above' ? branchY + 15 : branchY - 15;
+      ctx.fillText(shortContent, nodeX, labelY);
     });
 
     // Red "today" line (unchanged)
@@ -841,55 +895,6 @@ export default function Timeline() {
       ctx.lineTo(todayX, size.height);
       ctx.stroke();
     }
-
-    /**
-     * Collect markers first so we can decide which ones to hide / fade based
-     * on pixel spacing after all x-positions are known.
-     */
-    markersByBranch.forEach(list => {
-      list.sort((a, b) => a.x - b.x);
-      list.forEach((m, idx) => {
-        const prevX = idx > 0 ? list[idx - 1].x : -Infinity;
-        const nextX = idx < list.length - 1 ? list[idx + 1].x : Infinity;
-        const gap = Math.min(m.x - prevX, nextX - m.x);
-        const fadeStart = MIN_MARKER_SPACING - FADE_RANGE;
-        let alpha: number;
-        if (gap >= MIN_MARKER_SPACING) alpha = 1;
-        else if (gap <= fadeStart) alpha = 0;
-        else alpha = (gap - fadeStart) / FADE_RANGE;
-
-        if (alpha <= 0) return; // hidden
-
-        ctx.save();
-        ctx.globalAlpha = alpha;
-
-        // Draw circle
-        const radius = m.type === 'node' ? NODE_RADIUS : 8;
-        ctx.fillStyle = m.color;
-        ctx.beginPath();
-        ctx.arc(m.x, m.y, radius, 0, 2 * Math.PI);
-        ctx.fill();
-
-        // White border for nodes
-        if (m.type === 'node') {
-          ctx.strokeStyle = '#FFFFFF';
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-
-        // Label
-        if (m.label) {
-          ctx.font = m.type === 'node' ? '12px Lora, serif' : '14px Lora, serif';
-          ctx.textAlign = m.type === 'node' ? 'center' : 'left';
-          ctx.textBaseline = 'top';
-          ctx.fillStyle = m.type === 'node' ? '#FFFFFF' : m.color;
-          const labelY = m.type === 'node' ? (m.y + 15) : (m.y - 20);
-          ctx.fillText(m.label, m.x, labelY);
-        }
-
-        ctx.restore();
-      });
-    });
   };
 
   // Redraw when currentTime changes
@@ -977,9 +982,53 @@ export default function Timeline() {
       const secPerPx = scaleSecPerPx.current;
       const offsetSec = offsetEpochSec.current;
       
-      // Use latest physics-based positions computed during draw
-      const branchPositions = branchPositionsRef.current;
-      if (branchPositions.size === 0) return;
+      // Calculate branch positions using the same algorithm as the drawing function
+      const branchPositions = new Map<string, number>();
+      const branchSide = new Map<string, 'above' | 'below'>();
+
+      // Place the main "Life" branch at center
+      branchPositions.set(MAIN_BRANCH, centreY);
+      branchSide.set(MAIN_BRANCH, 'above');
+
+      // Get all non-main branches
+      const otherBranches = branches.filter(b => b.branchId !== MAIN_BRANCH);
+      
+      // Sort branches by start date for more logical distribution
+      otherBranches.sort((a, b) => {
+        const aStart = isoToEpochSeconds(a.branchStart);
+        const bStart = isoToEpochSeconds(b.branchStart);
+        return aStart - bStart;
+      });
+
+      // Distribute branches above and below the main branch
+      otherBranches.forEach((branch, idx) => {
+        // Determine if branch should go above or below
+        let side: 'above' | 'below';
+        
+        if (branch.parentBranchId === MAIN_BRANCH) {
+          // Direct children of main branch alternate above/below
+          side = idx % 2 === 0 ? 'above' : 'below';
+        } else {
+          // Sub-branches (like fraternity under MIT) go on the same side as their parent
+          const parentSide = branchSide.get(branch.parentBranchId!);
+          side = parentSide || 'above'; // Default to above for sub-branches
+        }
+        
+        branchSide.set(branch.branchId, side);
+        
+        // Calculate vertical position
+        // Count how many branches are already on this side
+        const branchesOnSameSide = otherBranches
+          .slice(0, idx)
+          .filter(b => branchSide.get(b.branchId) === side).length;
+        
+        const branchIndex = branchesOnSameSide + 1;
+        const branchY = side === 'above' 
+          ? centreY - branchIndex * BRANCH_SPACING
+          : centreY + branchIndex * BRANCH_SPACING;
+        
+        branchPositions.set(branch.branchId, branchY);
+      });
 
       let foundTooltip = false;
 
@@ -1012,6 +1061,62 @@ export default function Timeline() {
             type: 'branch'
           });
           foundTooltip = true;
+        }
+      });
+
+      // Check for branch start/end markers (child branches on parent positions)
+      branches.forEach(branch => {
+        if (branch.branchId === MAIN_BRANCH) return; // Skip main branch
+        
+        const startEpoch = isoToEpochSeconds(branch.branchStart);
+        const endEpoch = branch.branchEnd ? isoToEpochSeconds(branch.branchEnd) : null;
+        
+        const startX = (startEpoch - offsetSec) / secPerPx;
+        const endX = endEpoch ? (endEpoch - offsetSec) / secPerPx : null;
+
+        // Get parent branch position for marker placement
+        const parentBranchId = branch.parentBranchId;
+        const parentBranchY = parentBranchId ? branchPositions.get(parentBranchId) : null;
+        if (parentBranchY === undefined || parentBranchY === null) return;
+
+        // Check start marker
+        if (startX >= -10 && startX <= size.width + 10) {
+          const distance = Math.sqrt((mouseX - startX) ** 2 + (mouseY - parentBranchY) ** 2);
+          if (distance <= 8) { // Same radius as marker
+            const tooltipContent = `
+              <strong>${branch.branchName} begins</strong><br/>
+              Date: ${formatDateForTooltip(branch.branchStart)}<br/>
+              <em>${branch.branchSummary}</em>
+            `;
+            
+            setTooltip({
+              x: e.clientX + TOOLTIP_OFFSET,
+              y: e.clientY + TOOLTIP_OFFSET,
+              content: tooltipContent,
+              type: 'branch'
+            });
+            foundTooltip = true;
+          }
+        }
+
+        // Check end marker (if branch has an end)
+        if (endEpoch && endX !== null && endX >= -10 && endX <= size.width + 10) {
+          const distance = Math.sqrt((mouseX - endX) ** 2 + (mouseY - parentBranchY) ** 2);
+          if (distance <= 8) { // Same radius as marker
+            const tooltipContent = `
+              <strong>${branch.branchName} ends</strong><br/>
+              Date: ${formatDateForTooltip(branch.branchEnd!)}<br/>
+              <em>${branch.branchSummary}</em>
+            `;
+            
+            setTooltip({
+              x: e.clientX + TOOLTIP_OFFSET,
+              y: e.clientY + TOOLTIP_OFFSET,
+              content: tooltipContent,
+              type: 'branch'
+            });
+            foundTooltip = true;
+          }
         }
       });
 
