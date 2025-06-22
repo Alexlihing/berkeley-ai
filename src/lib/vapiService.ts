@@ -1,5 +1,6 @@
 import { TreeService } from './treeService';
-import { Node, Branch } from '@/types/tree';
+import { RecommendationService } from './recommendationService';
+import { Node, Branch, RecommendationType } from '@/types/tree';
 
 export class VapiService {
   // Get Vapi tools configuration
@@ -105,6 +106,69 @@ export class VapiService {
           },
           required: ["uuid", "content"]
         }
+      },
+      {
+        name: "get_recommendations",
+        description: "Get intelligent recommendations based on your life tree patterns and current state",
+        parameters: {
+          type: "object",
+          properties: {
+            limit: {
+              type: "number",
+              description: "Maximum number of recommendations to return (default: 5)"
+            }
+          }
+        }
+      },
+      {
+        name: "get_recommendations_by_type",
+        description: "Get recommendations filtered by specific type (close_path, start_new_path, continue_path, reflect_on_path, merge_paths)",
+        parameters: {
+          type: "object",
+          properties: {
+            type: {
+              type: "string",
+              description: "Type of recommendations to get",
+              enum: ["close_path", "start_new_path", "continue_path", "reflect_on_path", "merge_paths"]
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of recommendations to return (default: 3)"
+            }
+          },
+          required: ["type"]
+        }
+      },
+      {
+        name: "get_high_priority_recommendations",
+        description: "Get only high priority recommendations that need immediate attention",
+        parameters: {
+          type: "object",
+          properties: {
+            limit: {
+              type: "number",
+              description: "Maximum number of recommendations to return (default: 3)"
+            }
+          }
+        }
+      },
+      {
+        name: "close_branch",
+        description: "Close a branch by setting its end date, marking it as complete",
+        parameters: {
+          type: "object",
+          properties: {
+            branchId: {
+              type: "string",
+              description: "ID of the branch to close"
+            },
+            summary: {
+              type: "string",
+              description: "Summary of what was accomplished in this branch"
+            }
+          },
+          required: ["branchId", "summary"]
+        }
       }
     ];
   }
@@ -141,6 +205,18 @@ export class VapiService {
           break;
         case 'update_node':
           result = this.handleUpdateNode(parameters);
+          break;
+        case 'get_recommendations':
+          result = this.handleGetRecommendations(parameters);
+          break;
+        case 'get_recommendations_by_type':
+          result = this.handleGetRecommendationsByType(parameters);
+          break;
+        case 'get_high_priority_recommendations':
+          result = this.handleGetHighPriorityRecommendations(parameters);
+          break;
+        case 'close_branch':
+          result = this.handleCloseBranch(parameters);
           break;
         default:
           result = {
@@ -243,6 +319,64 @@ export class VapiService {
       return {
         success: false,
         message: `Node not found`
+      };
+    }
+  }
+
+  private static handleGetRecommendations(parameters: any) {
+    const limit = parameters.limit || 5;
+    
+    const allRecommendations = RecommendationService.generateRecommendations();
+    const recommendations = allRecommendations.slice(0, limit);
+    return {
+      success: true,
+      message: `Retrieved ${recommendations.length} recommendations`,
+      recommendations: recommendations
+    };
+  }
+
+  private static handleGetRecommendationsByType(parameters: any) {
+    const { type, limit = 3 } = parameters;
+    
+    const allRecommendations = RecommendationService.getRecommendationsByType(type as RecommendationType);
+    const recommendations = allRecommendations.slice(0, limit);
+    return {
+      success: true,
+      message: `Retrieved ${recommendations.length} recommendations of type "${type}"`,
+      recommendations: recommendations
+    };
+  }
+
+  private static handleGetHighPriorityRecommendations(parameters: any) {
+    const limit = parameters.limit || 3;
+    
+    const allRecommendations = RecommendationService.getHighPriorityRecommendations();
+    const recommendations = allRecommendations.slice(0, limit);
+    return {
+      success: true,
+      message: `Retrieved ${recommendations.length} high priority recommendations`,
+      recommendations: recommendations
+    };
+  }
+
+  private static handleCloseBranch(parameters: any) {
+    const { branchId, summary } = parameters;
+    
+    const updatedBranch = TreeService.updateBranch(branchId, { 
+      branchEnd: new Date().toISOString(),
+      branchSummary: summary 
+    });
+    
+    if (updatedBranch) {
+      return {
+        success: true,
+        message: `Closed branch successfully`,
+        branch: updatedBranch
+      };
+    } else {
+      return {
+        success: false,
+        message: `Branch not found or could not be closed`
       };
     }
   }

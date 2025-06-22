@@ -43,4 +43,55 @@ export class Branch {
     this.branchName = branchName;
     this.branchSummary = branchSummary;
   }
+}
+
+export enum RecommendationType {
+  CLOSE_PATH = 'close_path',
+  START_NEW_PATH = 'start_new_path',
+  CONTINUE_PATH = 'continue_path',
+  REFLECT_ON_PATH = 'reflect_on_path',
+  MERGE_PATHS = 'merge_paths'
+}
+
+export enum RecommendationPriority {
+  LOW = 'low',
+  MEDIUM = 'medium',
+  HIGH = 'high'
+}
+
+export class Recommendation {
+  id: string;
+  type: RecommendationType;
+  priority: RecommendationPriority;
+  title: string;
+  description: string;
+  reasoning: string;
+  suggestedActions: string[];
+  relatedBranchIds: string[];
+  relatedNodeIds: string[];
+  createdAt: string;
+
+  constructor(
+    id: string,
+    type: RecommendationType,
+    priority: RecommendationPriority,
+    title: string,
+    description: string,
+    reasoning: string,
+    suggestedActions: string[],
+    relatedBranchIds: string[] = [],
+    relatedNodeIds: string[] = [],
+    createdAt: string = new Date().toISOString()
+  ) {
+    this.id = id;
+    this.type = type;
+    this.priority = priority;
+    this.title = title;
+    this.description = description;
+    this.reasoning = reasoning;
+    this.suggestedActions = suggestedActions;
+    this.relatedBranchIds = relatedBranchIds;
+    this.relatedNodeIds = relatedNodeIds;
+    this.createdAt = createdAt;
+  }
 } 

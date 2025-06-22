@@ -3,6 +3,18 @@
 import { useState, useEffect, useRef } from 'react';
 import Vapi from '@vapi-ai/web';
 
+interface Recommendation {
+  id: string;
+  type: string;
+  priority: string;
+  title: string;
+  description: string;
+  reasoning: string;
+  suggestedActions: string[];
+  relatedBranchIds: string[];
+  relatedNodeIds: string[];
+  createdAt: string;
+}
 
 interface TreeNode {
   id: string;
@@ -30,7 +42,9 @@ interface TreeStats {
 export default function Home() {
   const [tree, setTree] = useState<TreeNode | null>(null);
   const [stats, setStats] = useState<TreeStats | null>(null);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingRecommendations, setLoadingRecommendations] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isCallActive, setIsCallActive] = useState(false);
   const [transcript, setTranscript] = useState<string>('');
@@ -64,6 +78,36 @@ export default function Home() {
       setError(`Failed to fetch tree data: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchRecommendations = async (type?: string, priority?: string) => {
+    setLoadingRecommendations(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams();
+      if (type) params.append('type', type);
+      if (priority) params.append('priority', priority);
+      params.append('limit', '5');
+
+      const response = await fetch(`/api/recommendations?${params}`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setRecommendations(data.recommendations);
+      } else {
+        setError(data.error || 'Failed to fetch recommendations');
+      }
+    } catch (err) {
+      console.error('Error fetching recommendations:', err);
+      setError(`Failed to fetch recommendations: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setLoadingRecommendations(false);
     }
   };
 
@@ -277,6 +321,87 @@ export default function Home() {
             >
               🔄 Refresh Tree
             </button>
+          </div>
+
+          {/* Recommendations Section */}
+          <div className="mb-6">
+            <h3 className="text-lg font-semibold mb-3">🤖 AI Recommendations</h3>
+            <div className="flex justify-center gap-2 mb-4">
+              <button
+                onClick={() => fetchRecommendations()}
+                className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+              >
+                📋 All Recommendations
+              </button>
+              <button
+                onClick={() => fetchRecommendations(undefined, 'high')}
+                className="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+              >
+                ⚡ High Priority
+              </button>
+              <button
+                onClick={() => fetchRecommendations('close_path')}
+                className="bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+              >
+                🔚 Close Paths
+              </button>
+              <button
+                onClick={() => fetchRecommendations('start_new_path')}
+                className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+              >
+                🌱 New Paths
+              </button>
+            </div>
+
+            {loadingRecommendations && (
+              <div className="text-center py-4">
+                <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-purple-600"></div>
+                <p className="mt-2 text-gray-600">Analyzing your life tree...</p>
+              </div>
+            )}
+
+            {recommendations.length > 0 && (
+              <div className="bg-white rounded-lg shadow p-6 mb-6">
+                <h4 className="text-lg font-semibold mb-4">💡 Recommendations for You</h4>
+                <div className="space-y-4">
+                  {recommendations.map((rec, index) => (
+                    <div key={rec.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                      <div className="flex items-start justify-between mb-2">
+                        <h5 className="font-semibold text-gray-900">{rec.title}</h5>
+                        <div className="flex gap-2">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            rec.priority === 'high' ? 'bg-red-100 text-red-800' :
+                            rec.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-green-100 text-green-800'
+                          }`}>
+                            {rec.priority}
+                          </span>
+                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            {rec.type.replace('_', ' ')}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-gray-700 mb-3">{rec.description}</p>
+                      <div className="bg-gray-50 rounded p-3 mb-3">
+                        <p className="text-sm text-gray-600 mb-2"><strong>Reasoning:</strong></p>
+                        <p className="text-sm text-gray-700">{rec.reasoning}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 mb-2"><strong>Suggested Actions:</strong></p>
+                        <ul className="text-sm text-gray-700 space-y-1">
+                          {rec.suggestedActions.map((action, actionIndex) => (
+                            <li key={actionIndex} className="flex items-start">
+                              <span className="text-blue-500 mr-2">•</span>
+                              {action}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {isCallActive && (

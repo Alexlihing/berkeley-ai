@@ -9,10 +9,10 @@
         "lint": "next lint"
     },
     "dependencies": {
+        "@vapi-ai/web": "^2.3.6",
         "next": "15.3.4",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
-        "next": "15.3.4",
         "uuid": "^9.0.1",
         "zod": "^3.22.4"
     },
