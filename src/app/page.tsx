@@ -63,8 +63,18 @@ const GridMarkers = ({
     
     const x = dateToX(date);
     
-    // Align to pixel grid for crisp rendering (avoid flicker)
-    const xAligned = Math.round(x) + 0.5; // Center on pixel for even stroke widths
+    // Skip markers that are far outside of the current viewport to reduce overdraw and DOM nodes
+    if (!isXInRenderRange(x)) {
+      return;
+    }
+
+    // NOTE: We intentionally do NOT snap every line to the pixel grid here. While rounding gives
+    // razor-sharp lines when the camera is perfectly still, it causes the entire grid to "jump"
+    // by a whole pixel whenever the viewBox crosses the 0.5-pixel threshold. At very high zoom
+    // levels (hour / minute), these jumps become extremely noticeable – they look like tearing.
+    // Leaving the coordinate unrounded eliminates that discontinuity. We still keep
+    // `shapeRendering="crispEdges"` so browsers render the strokes sharply.
+    const xAligned = x;
     
     markers.push(
       <g key={key}>
@@ -76,7 +86,6 @@ const GridMarkers = ({
           stroke={grayColor}
           strokeWidth={gridStrokeWidth}
           strokeOpacity={opacity}
-          shapeRendering="crispEdges"
           vectorEffect="non-scaling-stroke"
         />
         {showWhiteTick && (
@@ -88,7 +97,6 @@ const GridMarkers = ({
             stroke="white"
             strokeWidth={tickStrokeWidth}
             strokeOpacity={opacity}
-            shapeRendering="crispEdges"
             vectorEffect="non-scaling-stroke"
           />
         )}
@@ -417,6 +425,10 @@ const TimelineVisualization = () => {
   const mainTimelineEndDate = useMemo(() => new Date(), []);
   
   const pixelsPerDay = 200;
+
+  // The minimum view-box width we allow (one hour of timeline fills the viewport)
+  const MIN_VIEWBOX_W = pixelsPerDay / 24; // ≈8.333 units – 1 hour
+
   const totalGridDays = useMemo(
     () => (gridEndDate.getTime() - timelineStartDate.getTime()) / (1000 * 60 * 60 * 24),
     [timelineStartDate, gridEndDate]
@@ -516,6 +528,11 @@ const TimelineVisualization = () => {
     
     const newW = viewBox.w * zoomFactor;
     const newH = viewBox.h * zoomFactor;
+
+    // Clamp maximum zoom-in so that one hour fills the screen
+    if (newW < MIN_VIEWBOX_W) {
+      return; // abort – already at max zoom
+    }
 
     // Calculate visible years for the new zoom level
     const newVisibleDays = newW / pixelsPerDay;
