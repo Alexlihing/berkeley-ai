@@ -4,10 +4,10 @@ import { TreeService } from '@/lib/treeService';
 // GET /api/tree/nodes/[uuid] - Get a specific node
 export async function GET(
   request: NextRequest,
-  { params }: { params: { uuid: string } }
+  context: any
 ) {
   try {
-    const { uuid } = params;
+    const { uuid } = context.params;
     const node = TreeService.findNodeById(uuid);
 
     if (!node) {
@@ -33,10 +33,10 @@ export async function GET(
 // PUT /api/tree/nodes/[uuid] - Update a specific node
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { uuid: string } }
+  context: any
 ) {
   try {
-    const { uuid } = params;
+    const { uuid } = context.params;
     const body = await request.json();
     const { content, isUpdating } = body;
 
@@ -66,10 +66,10 @@ export async function PUT(
 // DELETE /api/tree/nodes/[uuid] - Delete a specific node
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { uuid: string } }
+  context: any
 ) {
   try {
-    const { uuid } = params;
+    const { uuid } = context.params;
     const deleted = TreeService.deleteNode(uuid);
 
     if (!deleted) {

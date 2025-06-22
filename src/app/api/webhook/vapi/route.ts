@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { VapiService } from '@/lib/vapiService';
 
-export async function POST(request: NextRequest, response: NextResponse) {
+export async function POST(request: NextRequest) {
   try {
     const { message } = await request.json();
     

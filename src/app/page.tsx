@@ -79,89 +79,134 @@ export default function Home() {
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [viewMode, setViewMode] = useState<'tree' | 'nodes' | 'branches'>('tree');
 
-  const fetchTree = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/tree');
-      console.log('Tree response status:', response.status);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      console.log('Tree data:', data);
-      
-      if (data.success) {
-        setTree(data.tree);
+  // SSE connection ref
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  // Initialize SSE connection
+  const initializeSSE = () => {
+    console.log('SSE: initializeSSE called, current ref:', eventSourceRef.current);
+    
+    if (eventSourceRef.current) {
+      console.log('SSE: Closing existing connection');
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+
+    console.log('SSE: Initializing new connection...');
+    const eventSource = new EventSource('/api/tree/events');
+    eventSourceRef.current = eventSource;
+
+    eventSource.onopen = () => {
+      console.log('SSE: Connection opened successfully');
+    };
+
+    eventSource.onmessage = (event) => {
+      try {
+        console.log('SSE: Raw message received:', event.data);
+        const data = JSON.parse(event.data);
+        console.log('SSE: Parsed data:', data);
+
+        if (data.type === 'initial') {
+          // Initial data load
+          console.log('SSE: Loading initial data');
+          setNodes(data.nodes);
+          setBranches(data.branches);
         setStats(data.stats);
+          setLoadingNodes(false);
+          setLoadingBranches(false);
+          
+          // Build initial tree structure
+          const initialTree = buildTreeStructure(data.branches, data.nodes);
+          setTree(initialTree);
+        } else if (data.type === 'connected') {
+          // Connection established
+          console.log('SSE: Connection confirmed:', data.timestamp);
+        } else if (data.type === 'heartbeat') {
+          // Heartbeat message - just log it
+          console.log('SSE: Heartbeat received:', data.timestamp);
       } else {
-        setError(data.error || 'Failed to fetch tree');
+          // Real-time updates
+          console.log('SSE: Processing update:', data.type);
+          setNodes(data.allNodes);
+          setBranches(data.allBranches);
+          setStats(data.stats);
+          
+          // Update tree structure
+          const updatedTree = buildTreeStructure(data.allBranches, data.allNodes);
+          setTree(updatedTree);
+        }
+      } catch (error) {
+        console.error('SSE: Error parsing data:', error);
       }
-    } catch (err) {
-      console.error('Error fetching tree:', err);
-      setError(`Failed to fetch tree data: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setLoading(false);
-    }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('SSE: Connection error:', error);
+      console.log('SSE: EventSource readyState:', eventSource.readyState);
+      // Attempt to reconnect after a delay
+      setTimeout(() => {
+        if (eventSourceRef.current) {
+          console.log('SSE: Attempting to reconnect...');
+          initializeSSE();
+        }
+      }, 5000);
+    };
+
+    return eventSource;
   };
 
-  // Add function to fetch nodes separately
-  const fetchNodes = async () => {
+  // Helper function to build tree structure
+  const buildTreeStructure = (allBranches: Branch[], allNodes: Node[]): TreeNode => {
+    return {
+      id: 'root',
+      title: 'Life Tree',
+      description: 'Your life as a branching timeline',
+      timestamp: new Date().toISOString(),
+      type: 'commit' as const,
+      parentIds: [],
+      children: allBranches.map(branch => ({
+        id: branch.branchId,
+        title: branch.branchName,
+        description: branch.branchSummary,
+        timestamp: branch.branchStart,
+        type: 'branch' as const,
+        branchName: branch.branchName,
+        parentIds: branch.parentBranchId ? [branch.parentBranchId] : [],
+        children: allNodes
+          .filter(node => node.branchId === branch.branchId)
+          .map(node => ({
+            id: node.uuid,
+            title: `Entry ${node.uuid.slice(0, 8)}`,
+            description: node.content,
+            timestamp: node.timeStamp,
+            type: 'commit' as const,
+            parentIds: [branch.branchId],
+            children: [],
+            metadata: {
+              status: node.isUpdating ? 'active' : 'completed'
+            }
+          })),
+        metadata: {
+          status: branch.branchEnd ? 'completed' : 'active'
+        }
+      }))
+    };
+  };
+
+  // Initialize SSE on component mount
+  useEffect(() => {
+    console.log('SSE: Component mounted - initializing SSE');
     setLoadingNodes(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/tree?action=nodes');
-      console.log('Nodes response status:', response.status);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      console.log('Nodes data:', data);
-      
-      if (data.success) {
-        setNodes(data.nodes);
-      } else {
-        setError(data.error || 'Failed to fetch nodes');
-      }
-    } catch (err) {
-      console.error('Error fetching nodes:', err);
-      setError(`Failed to fetch nodes: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setLoadingNodes(false);
-    }
-  };
-
-  // Add function to fetch branches separately
-  const fetchBranches = async () => {
     setLoadingBranches(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/tree?action=branches');
-      console.log('Branches response status:', response.status);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+    const eventSource = initializeSSE();
+
+    return () => {
+      console.log('SSE: Component unmounting - closing SSE connection');
+      if (eventSource) {
+        eventSource.close();
       }
-      
-      const data = await response.json();
-      console.log('Branches data:', data);
-      
-      if (data.success) {
-        setBranches(data.branches);
-      } else {
-        setError(data.error || 'Failed to fetch branches');
-      }
-    } catch (err) {
-      console.error('Error fetching branches:', err);
-      setError(`Failed to fetch branches: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setLoadingBranches(false);
-    }
-  };
+    };
+  }, []); // Empty dependency array to run only once
 
   const fetchRecommendations = async (type?: string, priority?: string) => {
     setLoadingRecommendations(true);
@@ -226,9 +271,7 @@ export default function Home() {
       vapiRef.current.on('call-end', () => {
         console.log('Call ended');
         setIsCallActive(false);
-        fetchTree(); // Refresh tree data after call ends
-        fetchNodes(); // Refresh nodes data after call ends
-        fetchBranches(); // Refresh branches data after call ends
+        // No need to manually refresh since SSE will handle updates
       });
 
       vapiRef.current.on('message', (message) => {
@@ -289,17 +332,18 @@ export default function Home() {
     }
   };
 
-  useEffect(() => {
-    refreshAllData();
-  }, []);
-
   // Function to refresh all data
   const refreshAllData = async () => {
-    await Promise.all([
-      fetchTree(),
-      fetchNodes(),
-      fetchBranches()
-    ]);
+    // Reconnect SSE to get fresh data
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+    setLoadingNodes(true);
+    setLoadingBranches(true);
+    initializeSSE();
+    
+    // Also refresh recommendations
+    await fetchRecommendations();
   };
 
   // Function to format date
@@ -383,6 +427,40 @@ export default function Home() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
             </svg>
             Auto-Fit
+          </button>
+          <button
+            onClick={async () => {
+              try {
+                const response = await fetch('/api/tree/test-update', { method: 'POST' });
+                const data = await response.json();
+                console.log('Test update response:', data);
+              } catch (error) {
+                console.error('Test update error:', error);
+              }
+            }}
+            className="px-3 py-1 rounded text-sm font-medium transition-colors bg-red-100 text-red-700 hover:bg-red-200 flex items-center gap-1"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            Test Update
+          </button>
+          <button
+            onClick={async () => {
+              try {
+                const response = await fetch('/api/tree/test-subscription');
+                const data = await response.json();
+                console.log('Subscription test response:', data);
+              } catch (error) {
+                console.error('Subscription test error:', error);
+              }
+            }}
+            className="px-3 py-1 rounded text-sm font-medium transition-colors bg-yellow-100 text-yellow-700 hover:bg-yellow-200 flex items-center gap-1"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Test Sub
           </button>
         </div>
       </div>

@@ -4,10 +4,10 @@ import { TreeService } from '@/lib/treeService';
 // GET /api/tree/branches/[branchId] - Get a specific branch
 export async function GET(
   request: NextRequest,
-  { params }: { params: { branchId: string } }
+  context: any
 ) {
   try {
-    const { branchId } = params;
+    const { branchId } = context.params;
     const branch = TreeService.findBranchById(branchId);
 
     if (!branch) {
@@ -38,10 +38,10 @@ export async function GET(
 // PUT /api/tree/branches/[branchId] - Update a specific branch
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { branchId: string } }
+  context: any
 ) {
   try {
-    const { branchId } = params;
+    const { branchId } = context.params;
     const body = await request.json();
     const { branchName, branchSummary, branchEnd } = body;
 
@@ -76,10 +76,10 @@ export async function PUT(
 // DELETE /api/tree/branches/[branchId] - Delete a specific branch and all its nodes
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { branchId: string } }
+  context: any
 ) {
   try {
-    const { branchId } = params;
+    const { branchId } = context.params;
     const deleted = TreeService.deleteBranch(branchId);
 
     if (!deleted) {
