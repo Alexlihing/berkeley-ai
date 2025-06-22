@@ -441,73 +441,84 @@ export default function Timeline() {
       ctx.stroke();
     }
 
-    const step = chooseTickStep(secPerPx);
-    const startTime = offsetSec - step * 2;
-    const endTime = offsetSec + secPerPx * size.width + step * 2;
-    
-    // Generate actual calendar-based ticks
-    const ticks = generateTicks(startTime, endTime, step);
+    // Determine two tick steps (current coarse and next finer) for cross-fading
+    const MIN_TICK_PX = 150;
+    const coarseStep = chooseTickStep(secPerPx, MIN_TICK_PX);
+    const stepIndex = TICK_STEPS.indexOf(coarseStep);
+    const fineStep = stepIndex > 0 ? TICK_STEPS[stepIndex - 1] : null;
 
-    // Use Lora font directly
-    ctx.font = '12px Lora, serif';
-    ctx.textAlign = 'left'; // Changed to left align since labels are to the right of lines
-    ctx.textBaseline = 'top';
+    // Cross-fade based on how far the pixel spacing of the COARSE step has travelled
+    const coarsePxSpacing = coarseStep / secPerPx;
+    const fadeProgress = Math.min(1, Math.max(0, (coarsePxSpacing - MIN_TICK_PX) / MIN_TICK_PX));
 
-    for (const t of ticks) {
-      const x = (t - offsetSec) / secPerPx;
-      if (x < -50 || x > size.width + 50) continue;
+    // When coarse spacing is exactly MIN_TICK_PX we show only coarse (alpha = 1)
+    // As it approaches 2×MIN_TICK_PX we fade to fine.
+    const coarseAlpha = 1 - fadeProgress;
+    const fineAlpha = fineStep !== null ? fadeProgress : 0;
 
-      // Apply left padding to x position
-      const adjustedX = x + leftPadding;
+    // Helper to draw a tick step with specified alpha
+    const drawStep = (step: number, alpha: number) => {
+      if (alpha <= 0) return;
+      const ticks = generateTicks(offsetSec - step * 2, offsetSec + secPerPx * size.width + step * 2, step);
+      ctx.globalAlpha = alpha;
 
-      // Only draw gray lines and labels for times at or after birth date
-      if (t >= BIRTH_DATE_EPOCH_SEC) {
-        // Grey full-height bar (infinitely tall, always draw)
-        ctx.strokeStyle = '#444444';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(adjustedX, 0);
-        ctx.lineTo(adjustedX, size.height);
-        ctx.stroke();
+      for (const t of ticks) {
+        const x = (t - offsetSec) / secPerPx;
+        if (x < -50 || x > size.width + 50) continue;
 
-        // Labels at top of screen (fixed position, ignoring vertical offset)
-        ctx.fillStyle = '#FFFFFF';
-        const label = formatLabel(t, step);
-        
-        // Check if label contains both day and time (has a space)
-        if ((step < SECONDS_IN_DAY) && label.includes(' ')) {
-          // Split day and time and draw on separate lines
-          const parts = label.split(' ');
-          const dayPart = parts[0] + ' ' + parts[1]; // "Jan 15"
-          const timePart = parts[2]; // "09:00"
-          
-          ctx.fillText(dayPart, adjustedX + 5, 10); // Day on first line (fixed at top)
-          ctx.fillText(timePart, adjustedX + 5, 25); // Time on second line (fixed at top)
-        } else {
-          // Single line label
-          ctx.fillText(label, adjustedX + 5, 10); // Fixed at top
+        // Grey full-height bar (for all times ≥ birth date)
+        if (t >= BIRTH_DATE_EPOCH_SEC) {
+          ctx.strokeStyle = '#444444';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, size.height);
+          ctx.stroke();
+
+          // Labels at top (skip for 1-minute granularity)
+          if (step !== SECONDS_IN_MINUTE) {
+            ctx.font = '12px Lora, serif';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = '#FFFFFF';
+            const label = formatLabel(t, step);
+
+            if ((step < SECONDS_IN_DAY) && label.includes(' ')) {
+              const parts = label.split(' ');
+              ctx.fillText(parts[0] + ' ' + parts[1], x + 5, 10);
+              ctx.fillText(parts[2], x + 5, 25);
+            } else {
+              ctx.fillText(label, x + 5, 10);
+            }
+          }
+        }
+
+        // White tick on main timeline within birth-to-today
+        if (t >= BIRTH_DATE_EPOCH_SEC && t <= currentTime) {
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(x, centreY - 8);
+          ctx.lineTo(x, centreY + 8);
+          ctx.stroke();
         }
       }
+    };
 
-      // White tick only within timeline bounds (birth to today)
-      if (t >= BIRTH_DATE_EPOCH_SEC && t <= currentTime) {
-        // White tick on the main line
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(adjustedX, centreY - 8);
-        ctx.lineTo(adjustedX, centreY + 8);
-        ctx.stroke();
-      }
-    }
+    // Draw coarse then fine so fine (more detailed) appears on top if both visible
+    drawStep(coarseStep, coarseAlpha);
+    if (fineStep !== null) drawStep(fineStep, fineAlpha);
 
-    // Red "today" line, with left padding
-    if (adjustedTodayX >= 0 && adjustedTodayX <= size.width) {
+    // Reset alpha
+    ctx.globalAlpha = 1;
+
+    // Red "today" line (unchanged)
+    if (todayX >= 0 && todayX <= size.width) {
       ctx.strokeStyle = '#FF0000';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(adjustedTodayX, 0);
-      ctx.lineTo(adjustedTodayX, size.height);
+      ctx.moveTo(todayX, 0);
+      ctx.lineTo(todayX, size.height);
       ctx.stroke();
     }
   };
