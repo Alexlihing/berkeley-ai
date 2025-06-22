@@ -1,7 +1,37 @@
 'use client';
 
 import React, { useRef, useEffect, useState } from 'react';
-import { nodes, branches, Node, Branch, MAIN_BRANCH } from './timelineData'; // Example data import
+// Remove the hardcoded data import and add prop interfaces
+// import { nodes, branches, Node, Branch, MAIN_BRANCH } from './timelineData';
+
+// Add interfaces for the API data structure
+interface Node {
+  uuid: string;
+  branchId: string;
+  timeStamp: string; // ISO
+  content: string;
+  isUpdating: boolean;
+}
+
+interface Branch {
+  parentBranchId: string;
+  branchId: string;
+  branchStart: string; // ISO
+  branchEnd: string;   // ISO or empty string for ongoing relationships
+  branchName: string;
+  branchSummary: string;
+}
+
+// Define the main branch constant
+const MAIN_BRANCH = 'root';
+
+// Props interface for the Timeline component
+interface TimelineProps {
+  nodes: Node[];
+  branches: Branch[];
+  loading?: boolean;
+}
+
 // Time constants
 const SECONDS_IN_MINUTE = 60;
 const SECONDS_IN_HOUR = 60 * SECONDS_IN_MINUTE;
@@ -536,83 +566,8 @@ function drawBirthdayNode(
 // when branches actually overlap in time. This keeps the diagram compact while
 // still decluttering crowded areas.
 type BranchSide = 'above' | 'below';
-function computeBranchLayout(
-  centreY: number,
-  currentTime: number
-): { positions: Map<string, number>; sides: Map<string, BranchSide> } {
-  const positions = new Map<string, number>();
-  const sides = new Map<string, BranchSide>();
 
-  // Main branch fixed at centre
-  positions.set(MAIN_BRANCH, centreY);
-  sides.set(MAIN_BRANCH, 'above');
-
-  // Utility to decide if two ranges [aStart,aEnd] and [bStart,bEnd] overlap
-  const rangesOverlap = (
-    aStart: number,
-    aEnd: number,
-    bStart: number,
-    bEnd: number
-  ) => aStart <= bEnd && aEnd >= bStart;
-
-  // Keep track of occupied time ranges at each vertical level per side
-  const levelsAbove: { start: number; end: number }[][] = [];
-  const levelsBelow: { start: number; end: number }[][] = [];
-
-  // Order branches by start time for deterministic placement
-  const sortedBranches = branches
-    .filter((b) => b.branchId !== MAIN_BRANCH)
-    .sort(
-      (a, b) => isoToEpochSeconds(a.branchStart) - isoToEpochSeconds(b.branchStart)
-    );
-
-  let nextSideAbove = true; // Toggle for children of main branch
-
-  sortedBranches.forEach((branch) => {
-    // Decide which side (above/below the main line) to use
-    let side: BranchSide;
-    if (branch.parentBranchId === MAIN_BRANCH) {
-      side = nextSideAbove ? 'above' : 'below';
-      nextSideAbove = !nextSideAbove;
-    } else {
-      side = sides.get(branch.parentBranchId!) || 'above';
-    }
-    sides.set(branch.branchId, side);
-
-    const branchStart = isoToEpochSeconds(branch.branchStart);
-    const branchEnd = branch.branchEnd
-      ? isoToEpochSeconds(branch.branchEnd)
-      : currentTime;
-
-    const levels = side === 'above' ? levelsAbove : levelsBelow;
-
-    // Find the first level that has no time overlap with this branch
-    let levelIdx = 0;
-    for (; levelIdx < levels.length; levelIdx++) {
-      const overlaps = levels[levelIdx].some((r) =>
-        rangesOverlap(branchStart, branchEnd, r.start, r.end)
-      );
-      if (!overlaps) break;
-    }
-
-    // Ensure the level array exists
-    if (!levels[levelIdx]) {
-      levels[levelIdx] = [];
-    }
-    levels[levelIdx].push({ start: branchStart, end: branchEnd });
-
-    // Translate level index to actual Y coordinate
-    const y =
-      side === 'above'
-        ? centreY - (levelIdx + 1) * BRANCH_SPACING
-        : centreY + (levelIdx + 1) * BRANCH_SPACING;
-    positions.set(branch.branchId, y);
-  });
-
-  return { positions, sides };
-}
-
-export default function Timeline() {
+export default function Timeline({ nodes, branches, loading }: TimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -629,6 +584,11 @@ export default function Timeline() {
     content: string;
     type: 'branch' | 'node';
   } | null>(null);
+
+  // Persist data in refs to avoid re-renders during zoom/pan
+  const persistedNodes = useRef<Node[]>([]);
+  const persistedBranches = useRef<Branch[]>([]);
+  const lastDataUpdate = useRef<number>(0);
 
   // State kept in refs to avoid re-render loops while panning/zooming
   const scaleSecPerPx = useRef<number>(1); // seconds represented by one CSS pixel
@@ -666,6 +626,117 @@ export default function Timeline() {
   const lastDragX = useRef<number>(0);
   const lastDragY = useRef<number>(0);
 
+  // Update persisted data when new data arrives (but only if it's actually new)
+  useEffect(() => {
+    const now = Date.now();
+    const dataHash = JSON.stringify({ nodes, branches });
+    
+    // Only update if data has actually changed or if we have no data yet
+    if (persistedNodes.current.length === 0 && persistedBranches.current.length === 0) {
+      // Initial load
+      persistedNodes.current = [...nodes];
+      persistedBranches.current = [...branches];
+      lastDataUpdate.current = now;
+      console.log('Initial data loaded:', { nodesCount: nodes.length, branchesCount: branches.length });
+    } else if (now - lastDataUpdate.current > 1000) {
+      // Only update if more than 1 second has passed since last update
+      // This prevents rapid updates during interactions
+      const nodesChanged = JSON.stringify(persistedNodes.current) !== JSON.stringify(nodes);
+      const branchesChanged = JSON.stringify(persistedBranches.current) !== JSON.stringify(branches);
+      
+      if (nodesChanged || branchesChanged) {
+        persistedNodes.current = [...nodes];
+        persistedBranches.current = [...branches];
+        lastDataUpdate.current = now;
+        console.log('Data updated after delay:', { nodesCount: nodes.length, branchesCount: branches.length });
+      }
+    }
+  }, [nodes, branches]);
+
+  // Get current data from refs
+  const getCurrentNodes = () => persistedNodes.current;
+  const getCurrentBranches = () => persistedBranches.current;
+
+  // Move computeBranchLayout inside the component
+  const computeBranchLayout = (
+    centreY: number,
+    currentTime: number
+  ): { positions: Map<string, number>; sides: Map<string, BranchSide> } => {
+    const positions = new Map<string, number>();
+    const sides = new Map<string, BranchSide>();
+
+    // Main branch fixed at centre
+    positions.set(MAIN_BRANCH, centreY);
+    sides.set(MAIN_BRANCH, 'above');
+
+    // Utility to decide if two ranges [aStart,aEnd] and [bStart,bEnd] overlap
+    const rangesOverlap = (
+      aStart: number,
+      aEnd: number,
+      bStart: number,
+      bEnd: number
+    ) => aStart <= bEnd && aEnd >= bStart;
+
+    // Keep track of occupied time ranges at each vertical level per side
+    const levelsAbove: { start: number; end: number }[][] = [];
+    const levelsBelow: { start: number; end: number }[][] = [];
+
+    // Use persisted data instead of props
+    const currentBranches = getCurrentBranches();
+
+    // Order branches by start time for deterministic placement
+    const sortedBranches = currentBranches
+      .filter((b: Branch) => b.branchId !== MAIN_BRANCH)
+      .sort(
+        (a: Branch, b: Branch) => isoToEpochSeconds(a.branchStart) - isoToEpochSeconds(b.branchStart)
+      );
+
+    let nextSideAbove = true; // Toggle for children of main branch
+
+    sortedBranches.forEach((branch: Branch) => {
+      // Decide which side (above/below the main line) to use
+      let side: BranchSide;
+      if (branch.parentBranchId === MAIN_BRANCH) {
+        side = nextSideAbove ? 'above' : 'below';
+        nextSideAbove = !nextSideAbove;
+      } else {
+        side = sides.get(branch.parentBranchId) || 'above';
+      }
+      sides.set(branch.branchId, side);
+
+      const branchStart = isoToEpochSeconds(branch.branchStart);
+      const branchEnd = branch.branchEnd && branch.branchEnd !== ''
+        ? isoToEpochSeconds(branch.branchEnd)
+        : currentTime;
+
+      const levels = side === 'above' ? levelsAbove : levelsBelow;
+
+      // Find the first level that has no time overlap with this branch
+      let levelIdx = 0;
+      for (; levelIdx < levels.length; levelIdx++) {
+        const overlaps = levels[levelIdx].some((r) =>
+          rangesOverlap(branchStart, branchEnd, r.start, r.end)
+        );
+        if (!overlaps) break;
+      }
+
+      // Ensure the level array exists
+      if (!levels[levelIdx]) {
+        levels[levelIdx] = [];
+      }
+      levels[levelIdx].push({ start: branchStart, end: branchEnd });
+
+      // Translate level index to actual Y coordinate
+      const y =
+        side === 'above'
+          ? centreY - (levelIdx + 1) * BRANCH_SPACING
+          : centreY + (levelIdx + 1) * BRANCH_SPACING;
+      positions.set(branch.branchId, y);
+    });
+
+    return { positions, sides };
+  };
+
   // Update current time every minute
   useEffect(() => {
     const updateTime = () => setCurrentTime(Date.now() / 1000);
@@ -678,6 +749,18 @@ export default function Timeline() {
   // Animation loop
   const animate = () => {
     let needsRedraw = false;
+
+    // Debug: Log animation state
+    if (isAnimating.current || zoomAnimation.current) {
+      const currentNodes = getCurrentNodes();
+      const currentBranches = getCurrentBranches();
+      console.log('Animation active:', { 
+        isAnimating: isAnimating.current, 
+        hasZoomAnimation: !!zoomAnimation.current,
+        nodesCount: currentNodes.length,
+        branchesCount: currentBranches.length
+      });
+    }
 
     // Handle zoom animation
     if (zoomAnimation.current) {
@@ -785,36 +868,24 @@ export default function Timeline() {
   useEffect(() => {
     if (size.width === 0 || isInitialized.current) return;
 
-    const minSecPerPx = (80 * SECONDS_IN_YEAR) / size.width;   // 80 y per screen
-    const maxSecPerPx = (1 * SECONDS_IN_HOUR) / size.width;    // 1 h per screen
-
-    // Initial view: 70 years span with birth date at left edge
-    const totalTimeSpan = 70 * SECONDS_IN_YEAR; // 70 years total span
-    
-    scaleSecPerPx.current = totalTimeSpan / size.width;
-    
-    // Clamp to zoom limits
-    scaleSecPerPx.current = Math.max(Math.min(scaleSecPerPx.current, minSecPerPx), maxSecPerPx);
-
-    // Position birth date at LEFT_PADDING pixels from left edge (same logic as momentum animation)
-    // birthX = (BIRTH_DATE_EPOCH_SEC - offsetSec) / secPerPx = LEFT_PADDING
-    // So: offsetSec = BIRTH_DATE_EPOCH_SEC - LEFT_PADDING * secPerPx
-    offsetEpochSec.current = BIRTH_DATE_EPOCH_SEC - LEFT_PADDING * scaleSecPerPx.current;
-
-    // Initialize vertical offset to center
-    offsetY.current = 0;
-
+    // Use auto-fit instead of fixed 70-year view
+    autoFitToData();
     isInitialized.current = true;
-    draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.width]);
 
-  // Reset initialization flag when size changes significantly 
+  // Auto-fit when data changes (but only after initial setup)
   useEffect(() => {
-    if (size.width > 0) {
-      isInitialized.current = false;
+    if (size.width === 0 || !isInitialized.current) return;
+    
+    // Only auto-fit if we have data
+    const currentNodes = getCurrentNodes();
+    const currentBranches = getCurrentBranches();
+    if (currentNodes.length > 0 || currentBranches.length > 0) {
+      autoFitToData();
     }
-  }, [size.width]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, branches]);
 
   // Cleanup animation on unmount
   useEffect(() => {
@@ -831,6 +902,24 @@ export default function Timeline() {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    // Get current data from refs
+    const currentNodes = getCurrentNodes();
+    const currentBranches = getCurrentBranches();
+
+    // Debug: Log data at the start of draw
+    console.log('Draw function called with:', { 
+      nodesCount: currentNodes.length, 
+      branchesCount: currentBranches.length,
+      isDragging: isDragging.current,
+      isAnimating: isAnimating.current
+    });
+
+    // Early return if no data and not loading
+    if (currentNodes.length === 0 && currentBranches.length === 0 && !loading) {
+      console.log('No data to draw, returning early');
+      return;
+    }
 
     // Retina support
     const dpr = window.devicePixelRatio || 1;
@@ -950,206 +1039,214 @@ export default function Timeline() {
     const { positions: branchPositions, sides: branchSide } = computeBranchLayout(centreY, currentTime);
 
     // Draw branches (skip the main "Life" branch so its line is invisible)
-    branches.forEach(branch => {
-      if (branch.branchId === MAIN_BRANCH) {
-        return; // Don't draw the "Life" branch line; its nodes will still render
-      }
-
-      const branchY = branchPositions.get(branch.branchId);
-      const side = branchSide.get(branch.branchId);
-      if (branchY === undefined || side === undefined) return;
-
-      const startEpoch = isoToEpochSeconds(branch.branchStart);
-      const endEpoch = branch.branchEnd ? isoToEpochSeconds(branch.branchEnd) : currentTime;
-      
-      let startX = (startEpoch - offsetSec) / secPerPx;
-      let endX = (endEpoch - offsetSec) / secPerPx;
-
-      // Only draw if branch is visible
-      if (endX < 0 || startX > size.width) return;
-      
-      let finalStartX = startX;
-      let finalEndX = endX;
-
-      // Draw perpendicular connector to parent branch at start
-      const parentBranchId = branch.parentBranchId;
-      if (parentBranchId) {
-        const parentBranchY = branchPositions.get(parentBranchId);
-        if (parentBranchY !== undefined && parentBranchY !== null) {
-          
-          // Draw connector at start point and get new start for the horizontal line
-          if (startX >= 0 && startX <= size.width) {
-             finalStartX = drawCurvedConnector(ctx, startX, parentBranchY, branchY, getBranchColor(branch.branchId), BRANCH_HEIGHT, endX - startX);
-          }
-          
-          // Draw connector at end point (if branch has an end)
-          if (branch.branchEnd && endX >= 0 && endX <= size.width) {
-            finalEndX = drawCurvedEndConnector(ctx, endX, parentBranchY, branchY, getBranchColor(branch.branchId), BRANCH_HEIGHT, endX - startX);
-          }
+    if (currentBranches && currentBranches.length > 0) {
+      currentBranches.forEach(branch => {
+        if (branch.branchId === MAIN_BRANCH) {
+          return; // Don't draw the "Life" branch line; its nodes will still render
         }
-      }
 
-      // Draw branch line, adjusted for the connectors
-      ctx.strokeStyle = getBranchColor(branch.branchId);
-      ctx.lineWidth = BRANCH_HEIGHT;
-      ctx.beginPath();
-      ctx.moveTo(Math.max(0, finalStartX), branchY);
-      ctx.lineTo(Math.min(size.width, finalEndX), branchY);
-      ctx.stroke();
+        const branchY = branchPositions.get(branch.branchId);
+        const side = branchSide.get(branch.branchId);
+        if (branchY === undefined || side === undefined) return;
 
-      // Draw branch start marker
-      if (startX >= -10 && startX <= size.width + 10) {
-        // Draw marker on parent branch position
+        const branchStart = isoToEpochSeconds(branch.branchStart);
+        const branchEnd = branch.branchEnd && branch.branchEnd !== ''
+          ? isoToEpochSeconds(branch.branchEnd)
+          : currentTime;
+        
+        let startX = (branchStart - offsetSec) / secPerPx;
+        let endX = (branchEnd - offsetSec) / secPerPx;
+
+        // Only draw if branch is visible
+        if (endX < 0 || startX > size.width) return;
+        
+        let finalStartX = startX;
+        let finalEndX = endX;
+
+        // Draw perpendicular connector to parent branch at start
         const parentBranchId = branch.parentBranchId;
-        const parentBranchY = parentBranchId ? branchPositions.get(parentBranchId) : branchY;
-        const markerY = parentBranchY !== undefined ? parentBranchY : branchY;
-        
-        const branchColor = getBranchColor(branch.branchId);
-        
-        // Draw background outline first
-        ctx.strokeStyle = '#000000'; // Black background outline
-        ctx.lineWidth = 4;
+        if (parentBranchId) {
+          const parentBranchY = branchPositions.get(parentBranchId);
+          if (parentBranchY !== undefined && parentBranchY !== null) {
+            
+            // Draw connector at start point and get new start for the horizontal line
+            if (startX >= 0 && startX <= size.width) {
+               finalStartX = drawCurvedConnector(ctx, startX, parentBranchY, branchY, getBranchColor(branch.branchId), BRANCH_HEIGHT, endX - startX);
+            }
+            
+            // Draw connector at end point (if branch has an end)
+            if (branch.branchEnd && branch.branchEnd !== '' && endX >= 0 && endX <= size.width) {
+              finalEndX = drawCurvedEndConnector(ctx, endX, parentBranchY, branchY, getBranchColor(branch.branchId), BRANCH_HEIGHT, endX - startX);
+            }
+          }
+        }
+
+        // Draw branch line, adjusted for the connectors
+        ctx.strokeStyle = getBranchColor(branch.branchId);
+        ctx.lineWidth = BRANCH_HEIGHT;
         ctx.beginPath();
-        ctx.arc(startX, markerY, 8, 0, 2 * Math.PI);
+        ctx.moveTo(Math.max(0, finalStartX), branchY);
+        ctx.lineTo(Math.min(size.width, finalEndX), branchY);
         ctx.stroke();
-        
-        // Draw accent color fill
-        ctx.fillStyle = branchColor;
-        ctx.beginPath();
-        ctx.arc(startX, markerY, 7, 0, 2 * Math.PI);
-        ctx.fill();
-        
-        // Branch name label with adaptive fade based on zoom
-        ctx.font = '14px Lora, serif';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
 
-        // Measure text and available on-screen branch width
-        const textWidth = ctx.measureText(branch.branchName).width;
-        const visibleStart = Math.max(0, finalStartX);
-        const visibleEnd = Math.min(size.width, finalEndX);
-        const visibleWidth = Math.max(0, visibleEnd - visibleStart);
+        // Draw branch start marker
+        if (startX >= -10 && startX <= size.width + 10) {
+          // Draw marker on parent branch position
+          const parentBranchId = branch.parentBranchId;
+          const parentBranchY = parentBranchId ? branchPositions.get(parentBranchId) : branchY;
+          const markerY = parentBranchY !== undefined ? parentBranchY : branchY;
+          
+          const branchColor = getBranchColor(branch.branchId);
+          
+          // Draw background outline first
+          ctx.strokeStyle = '#000000'; // Black background outline
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(startX, markerY, 8, 0, 2 * Math.PI);
+          ctx.stroke();
+          
+          // Draw accent color fill
+          ctx.fillStyle = branchColor;
+          ctx.beginPath();
+          ctx.arc(startX, markerY, 7, 0, 2 * Math.PI);
+          ctx.fill();
+          
+          // Branch name label with adaptive fade based on zoom
+          ctx.font = '14px Lora, serif';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
 
-        // Fade factor: 0 when not enough space, 1 when we have 1.5× space, linear in-between
-        let labelAlpha = (visibleWidth - textWidth) / (textWidth * 0.5);
-        labelAlpha = Math.max(0, Math.min(1, labelAlpha));
+          // Measure text and available on-screen branch width
+          const textWidth = ctx.measureText(branch.branchName).width;
+          const visibleStart = Math.max(0, finalStartX);
+          const visibleEnd = Math.min(size.width, finalEndX);
+          const visibleWidth = Math.max(0, visibleEnd - visibleStart);
 
-        if (labelAlpha > 0.01) {
-          ctx.fillStyle = getBranchColor(branch.branchId);
-          ctx.globalAlpha = labelAlpha;
-          const labelY = side === 'above' ? branchY - 15 : branchY + 15;
-          // Position label with left padding, but never to the left of the start marker
-          const labelX = Math.max(startX, BRANCH_LABEL_LEFT_PADDING);
-          ctx.fillText(branch.branchName, labelX, labelY);
-          ctx.globalAlpha = 1; // reset
+          // Fade factor: 0 when not enough space, 1 when we have 1.5× space, linear in-between
+          let labelAlpha = (visibleWidth - textWidth) / (textWidth * 0.5);
+          labelAlpha = Math.max(0, Math.min(1, labelAlpha));
+
+          if (labelAlpha > 0.01) {
+            ctx.fillStyle = getBranchColor(branch.branchId);
+            ctx.globalAlpha = labelAlpha;
+            const labelY = side === 'above' ? branchY - 15 : branchY + 15;
+            // Position label with left padding, but never to the left of the start marker
+            const labelX = Math.max(startX, BRANCH_LABEL_LEFT_PADDING);
+            ctx.fillText(branch.branchName, labelX, labelY);
+            ctx.globalAlpha = 1; // reset
+          }
+        } else if (startX < -10 && endX > 0) {
+          // Start node is off-screen to the left, but branch line is still visible
+          // Position label at left edge of window with padding
+          ctx.font = '14px Lora, serif';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+
+          const textWidth = ctx.measureText(branch.branchName).width;
+          const visibleStart = BRANCH_LABEL_LEFT_PADDING;
+          const visibleEnd = Math.min(size.width, finalEndX);
+          const visibleWidth = Math.max(0, visibleEnd - visibleStart);
+
+          let labelAlpha = (visibleWidth - textWidth) / (textWidth * 0.5);
+          labelAlpha = Math.max(0, Math.min(1, labelAlpha));
+
+          if (labelAlpha > 0.01) {
+            ctx.fillStyle = getBranchColor(branch.branchId);
+            ctx.globalAlpha = labelAlpha;
+            const labelY = side === 'above' ? branchY - 15 : branchY + 15;
+            ctx.fillText(branch.branchName, BRANCH_LABEL_LEFT_PADDING, labelY);
+            ctx.globalAlpha = 1;
+          }
+        } else if (startX > size.width && finalStartX <= size.width) {
+          // Branch start is off-screen to the right, but the branch line is visible
+          // Position label at left edge with padding
+          ctx.font = '14px Lora, serif';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+
+          const textWidth = ctx.measureText(branch.branchName).width;
+          const visibleStart = BRANCH_LABEL_LEFT_PADDING;
+          const visibleEnd = Math.min(size.width, finalEndX);
+          const visibleWidth = Math.max(0, visibleEnd - visibleStart);
+
+          let labelAlpha = (visibleWidth - textWidth) / (textWidth * 0.5);
+          labelAlpha = Math.max(0, Math.min(1, labelAlpha));
+
+          if (labelAlpha > 0.01) {
+            ctx.fillStyle = getBranchColor(branch.branchId);
+            ctx.globalAlpha = labelAlpha;
+            const labelY = side === 'above' ? branchY - 15 : branchY + 15;
+            ctx.fillText(branch.branchName, BRANCH_LABEL_LEFT_PADDING, labelY);
+            ctx.globalAlpha = 1;
+          }
         }
-      } else if (startX < -10 && endX > 0) {
-        // Start node is off-screen to the left, but branch line is still visible
-        // Position label at left edge of window with padding
-        ctx.font = '14px Lora, serif';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
 
-        const textWidth = ctx.measureText(branch.branchName).width;
-        const visibleStart = BRANCH_LABEL_LEFT_PADDING;
-        const visibleEnd = Math.min(size.width, finalEndX);
-        const visibleWidth = Math.max(0, visibleEnd - visibleStart);
-
-        let labelAlpha = (visibleWidth - textWidth) / (textWidth * 0.5);
-        labelAlpha = Math.max(0, Math.min(1, labelAlpha));
-
-        if (labelAlpha > 0.01) {
-          ctx.fillStyle = getBranchColor(branch.branchId);
-          ctx.globalAlpha = labelAlpha;
-          const labelY = side === 'above' ? branchY - 15 : branchY + 15;
-          ctx.fillText(branch.branchName, BRANCH_LABEL_LEFT_PADDING, labelY);
-          ctx.globalAlpha = 1;
+        // Draw branch end marker (if not ongoing)
+        if (branch.branchEnd && branch.branchEnd !== '' && endX >= -10 && endX <= size.width + 10) {
+          // Draw marker on parent branch position
+          const parentBranchId = branch.parentBranchId;
+          const parentBranchY = parentBranchId ? branchPositions.get(parentBranchId) : branchY;
+          const markerY = parentBranchY !== undefined ? parentBranchY : branchY;
+          
+          const branchColor = getBranchColor(branch.branchId);
+          
+          // Draw background outline first
+          ctx.strokeStyle = '#000000'; // Black background outline
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(endX, markerY, 8, 0, 2 * Math.PI);
+          ctx.stroke();
+          
+          // Draw accent color fill
+          ctx.fillStyle = branchColor;
+          ctx.beginPath();
+          ctx.arc(endX, markerY, 7, 0, 2 * Math.PI);
+          ctx.fill();
         }
-      } else if (startX > size.width && finalStartX <= size.width) {
-        // Branch start is off-screen to the right, but the branch line is visible
-        // Position label at left edge with padding
-        ctx.font = '14px Lora, serif';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-
-        const textWidth = ctx.measureText(branch.branchName).width;
-        const visibleStart = BRANCH_LABEL_LEFT_PADDING;
-        const visibleEnd = Math.min(size.width, finalEndX);
-        const visibleWidth = Math.max(0, visibleEnd - visibleStart);
-
-        let labelAlpha = (visibleWidth - textWidth) / (textWidth * 0.5);
-        labelAlpha = Math.max(0, Math.min(1, labelAlpha));
-
-        if (labelAlpha > 0.01) {
-          ctx.fillStyle = getBranchColor(branch.branchId);
-          ctx.globalAlpha = labelAlpha;
-          const labelY = side === 'above' ? branchY - 15 : branchY + 15;
-          ctx.fillText(branch.branchName, BRANCH_LABEL_LEFT_PADDING, labelY);
-          ctx.globalAlpha = 1;
+        
+        // Draw text box for open-ended branches at "today" terminal
+        if ((!branch.branchEnd || branch.branchEnd === '') && endX >= -50 && endX <= size.width + 50) {
+          // This is an open-ended branch that extends to today
+          // Draw a text box with the branch summary at the "today" terminal
+          drawRoundedTextBox(
+            ctx,
+            endX,
+            branchY,
+            branch.branchSummary,
+            getBranchColor(branch.branchId),
+            side,
+            size
+          );
         }
-      }
-
-      // Draw branch end marker (if not ongoing)
-      if (branch.branchEnd && endX >= -10 && endX <= size.width + 10) {
-        // Draw marker on parent branch position
-        const parentBranchId = branch.parentBranchId;
-        const parentBranchY = parentBranchId ? branchPositions.get(parentBranchId) : branchY;
-        const markerY = parentBranchY !== undefined ? parentBranchY : branchY;
-        
-        const branchColor = getBranchColor(branch.branchId);
-        
-        // Draw background outline first
-        ctx.strokeStyle = '#000000'; // Black background outline
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.arc(endX, markerY, 8, 0, 2 * Math.PI);
-        ctx.stroke();
-        
-        // Draw accent color fill
-        ctx.fillStyle = branchColor;
-        ctx.beginPath();
-        ctx.arc(endX, markerY, 7, 0, 2 * Math.PI);
-        ctx.fill();
-      }
-      
-      // Draw text box for open-ended branches at "today" terminal
-      if (!branch.branchEnd && endX >= -50 && endX <= size.width + 50) {
-        // This is an open-ended branch that extends to today
-        // Draw a text box with the branch summary at the "today" terminal
-        drawRoundedTextBox(
-          ctx,
-          endX,
-          branchY,
-          branch.branchSummary,
-          getBranchColor(branch.branchId),
-          side,
-          size
-        );
-      }
-    });
+      });
+    }
 
     // Pre-compute all branch start/end points for collision detection
     const branchMarkers: { x: number; type: 'start' | 'end' }[] = [];
-    branches.forEach(branch => {
-      if (branch.branchId === MAIN_BRANCH) return;
-      
-      const startEpoch = isoToEpochSeconds(branch.branchStart);
-      const endEpoch = branch.branchEnd ? isoToEpochSeconds(branch.branchEnd) : currentTime;
-      
-      const startX = (startEpoch - offsetSec) / secPerPx;
-      const endX = (endEpoch - offsetSec) / secPerPx;
-      
-      // Only include markers that are visible on screen
-      if (startX >= -20 && startX <= size.width + 20) {
-        branchMarkers.push({ x: startX, type: 'start' });
-      }
-      if (branch.branchEnd && endX >= -20 && endX <= size.width + 20) {
-        branchMarkers.push({ x: endX, type: 'end' });
-      }
-    });
+    if (currentBranches && currentBranches.length > 0) {
+      currentBranches.forEach(branch => {
+        if (branch.branchId === MAIN_BRANCH) return;
+        
+        const startEpoch = isoToEpochSeconds(branch.branchStart);
+        const endEpoch = branch.branchEnd && branch.branchEnd !== ''
+          ? isoToEpochSeconds(branch.branchEnd)
+          : currentTime;
+        
+        const startX = (startEpoch - offsetSec) / secPerPx;
+        const endX = (endEpoch - offsetSec) / secPerPx;
+        
+        // Only include markers that are visible on screen
+        if (startX >= -20 && startX <= size.width + 20) {
+          branchMarkers.push({ x: startX, type: 'start' });
+        }
+        if (branch.branchEnd && branch.branchEnd !== '' && endX >= -20 && endX <= size.width + 20) {
+          branchMarkers.push({ x: endX, type: 'end' });
+        }
+      });
+    }
 
     // Pre-compute node positions and text dimensions for collision detection
-    const visibleNodes = nodes
+    const visibleNodes = currentNodes && currentNodes.length > 0 ? currentNodes
       .map(node => {
         const branchY = branchPositions.get(node.branchId);
         const side = branchSide.get(node.branchId);
@@ -1184,7 +1281,7 @@ export default function Timeline() {
           textRight: nodeX + textWidth / 2
         };
       })
-      .filter((item): item is NonNullable<typeof item> => item !== null);
+      .filter((item): item is NonNullable<typeof item> => item !== null) : [];
 
     // Draw nodes with collision-aware labels
     visibleNodes.forEach((nodeInfo, index) => {
@@ -1278,6 +1375,28 @@ export default function Timeline() {
     draw();
   }, [currentTime, size.width, size.height]);
 
+  // Redraw when nodes or branches data changes
+  useEffect(() => {
+    // Only redraw if we have data or are loading
+    const currentNodes = getCurrentNodes();
+    const currentBranches = getCurrentBranches();
+    if (currentNodes.length > 0 || currentBranches.length > 0 || loading) {
+      draw();
+    }
+  }, [nodes, branches, loading]);
+
+  // Debug effect to log data changes
+  useEffect(() => {
+    const currentNodes = getCurrentNodes();
+    const currentBranches = getCurrentBranches();
+    console.log('Timeline data updated:', { 
+      nodesCount: currentNodes.length, 
+      branchesCount: currentBranches.length,
+      nodes: currentNodes.slice(0, 2), // Log first 2 nodes
+      branches: currentBranches.slice(0, 2) // Log first 2 branches
+    });
+  }, [nodes, branches]);
+
   // ───────────────────────── Interaction (pan/zoom) ───────────────────
   useEffect(() => {
     const container = containerRef.current;
@@ -1309,6 +1428,15 @@ export default function Timeline() {
 
     const onMouseMove = (e: MouseEvent) => {
       if (!isDragging.current) return;
+      
+      // Ensure data is still available during drag
+      const currentNodes = getCurrentNodes();
+      const currentBranches = getCurrentBranches();
+      if (currentNodes.length === 0 && currentBranches.length === 0) {
+        console.log('Data lost during drag, stopping');
+        endDrag();
+        return;
+      }
       
       const now = Date.now();
       const deltaTime = now - lastDragTime.current;
@@ -1358,18 +1486,24 @@ export default function Timeline() {
       const secPerPx = scaleSecPerPx.current;
       const offsetSec = offsetEpochSec.current;
       
+      // Get current data from refs
+      const currentNodes = getCurrentNodes();
+      const currentBranches = getCurrentBranches();
+      
       // Calculate branch positions using the same algorithm as the drawing function
       const { positions: branchPositions, sides: branchSide } = computeBranchLayout(centreY, currentTime);
 
       let foundTooltip = false;
 
       // Check for branch hover
-      branches.forEach(branch => {
+      currentBranches.forEach((branch: Branch) => {
         const branchY = branchPositions.get(branch.branchId);
         if (branchY === undefined) return;
 
         const startEpoch = isoToEpochSeconds(branch.branchStart);
-        const endEpoch = branch.branchEnd ? isoToEpochSeconds(branch.branchEnd) : currentTime;
+        const endEpoch = branch.branchEnd && branch.branchEnd !== ''
+          ? isoToEpochSeconds(branch.branchEnd)
+          : currentTime;
         
         const startX = (startEpoch - offsetSec) / secPerPx;
         const endX = (endEpoch - offsetSec) / secPerPx;
@@ -1381,7 +1515,7 @@ export default function Timeline() {
           const tooltipContent = `
             <strong>${branch.branchName}</strong><br/>
             Start: ${formatDateForTooltip(branch.branchStart)}<br/>
-            ${branch.branchEnd ? `End: ${formatDateForTooltip(branch.branchEnd)}` : 'Ongoing'}<br/>
+            ${branch.branchEnd && branch.branchEnd !== '' ? `End: ${formatDateForTooltip(branch.branchEnd)}` : 'Ongoing'}<br/>
             <em>${branch.branchSummary}</em>
           `;
           
@@ -1396,11 +1530,13 @@ export default function Timeline() {
       });
 
       // Check for branch start/end markers (child branches on parent positions)
-      branches.forEach(branch => {
+      currentBranches.forEach((branch: Branch) => {
         if (branch.branchId === MAIN_BRANCH) return; // Skip main branch
         
         const startEpoch = isoToEpochSeconds(branch.branchStart);
-        const endEpoch = branch.branchEnd ? isoToEpochSeconds(branch.branchEnd) : null;
+        const endEpoch = branch.branchEnd && branch.branchEnd !== ''
+          ? isoToEpochSeconds(branch.branchEnd)
+          : null;
         
         const startX = (startEpoch - offsetSec) / secPerPx;
         const endX = endEpoch ? (endEpoch - offsetSec) / secPerPx : null;
@@ -1452,7 +1588,7 @@ export default function Timeline() {
       });
 
       // Check for node hover
-      nodes.forEach(node => {
+      currentNodes.forEach((node: Node) => {
         const branchY = branchPositions.get(node.branchId);
         if (branchY === undefined) return;
 
@@ -1639,17 +1775,100 @@ export default function Timeline() {
     w.focusViewportToLoc = focusViewportToLoc;
     w.focusTodayView = focusTodayView;
     w.focusBirthdayView = focusBirthdayView;
+    w.autoFitToData = autoFitToData;
     return () => {
       delete w.focusViewportToLoc;
       delete w.focusTodayView;
       delete w.focusBirthdayView;
+      delete w.autoFitToData;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.width, size.height]);
 
+  // Function to calculate the time range of all data
+  const calculateDataTimeRange = () => {
+    const currentNodes = getCurrentNodes();
+    const currentBranches = getCurrentBranches();
+    
+    if (currentNodes.length === 0 && currentBranches.length === 0) {
+      return { min: BIRTH_DATE_EPOCH_SEC, max: currentTime };
+    }
+
+    let minTime = currentTime;
+    let maxTime = BIRTH_DATE_EPOCH_SEC;
+
+    // Check nodes
+    currentNodes.forEach(node => {
+      const nodeTime = isoToEpochSeconds(node.timeStamp);
+      minTime = Math.min(minTime, nodeTime);
+      maxTime = Math.max(maxTime, nodeTime);
+    });
+
+    // Check branches
+    currentBranches.forEach(branch => {
+      const startTime = isoToEpochSeconds(branch.branchStart);
+      const endTime = branch.branchEnd && branch.branchEnd !== '' 
+        ? isoToEpochSeconds(branch.branchEnd) 
+        : currentTime;
+      
+      minTime = Math.min(minTime, startTime);
+      maxTime = Math.max(maxTime, endTime);
+    });
+
+    return { min: minTime, max: maxTime };
+  };
+
+  // Function to auto-fit the view to show all data with padding
+  const autoFitToData = () => {
+    if (size.width === 0) return;
+
+    const { min: minTime, max: maxTime } = calculateDataTimeRange();
+    
+    // Add padding (20% on each side)
+    const timeRange = maxTime - minTime;
+    const padding = timeRange * 0.2;
+    const paddedMin = Math.max(BIRTH_DATE_EPOCH_SEC, minTime - padding);
+    const paddedMax = maxTime + padding;
+    
+    // Calculate scale to fit the padded range
+    const targetScale = (paddedMax - paddedMin) / size.width;
+    
+    // Clamp to zoom limits
+    const minSecPerPx = (80 * SECONDS_IN_YEAR) / size.width;
+    const maxSecPerPx = (1 * SECONDS_IN_HOUR) / size.width;
+    const clampedScale = Math.max(Math.min(targetScale, minSecPerPx), maxSecPerPx);
+    
+    // Center the view on the data range
+    const centerTime = (paddedMin + paddedMax) / 2;
+    const targetOffset = centerTime - (size.width / 2) * clampedScale;
+    
+    // Respect birth-date left boundary
+    const minOffset = BIRTH_DATE_EPOCH_SEC - LEFT_PADDING * clampedScale;
+    const finalOffset = Math.max(targetOffset, minOffset);
+    
+    // Update the view
+    scaleSecPerPx.current = clampedScale;
+    offsetEpochSec.current = finalOffset;
+    offsetY.current = 0; // Center vertically
+    
+    draw();
+  };
+
   return (
     <div ref={containerRef} className="w-full h-full bg-black cursor-grab select-none font-lora relative">
       <canvas ref={canvasRef} />
+      
+      {/* Loading State */}
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 z-20">
+          <div className="bg-white rounded-lg p-4 shadow-lg">
+            <div className="flex items-center space-x-2">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+              <span className="text-gray-700">Loading timeline data...</span>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Tooltip */}
       {tooltip && (

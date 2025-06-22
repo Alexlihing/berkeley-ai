@@ -18,7 +18,7 @@ export type Branch = {
 };
 
 // Branch UUIDs
-export const MAIN_BRANCH = 'main-branch-uuid';
+export const MAIN_BRANCH = 'root';
 export const MIT_BRANCH = 'mit-branch-uuid';
 export const FRAT_BRANCH = 'frat-branch-uuid';
 export const PHD_BRANCH = 'phd-branch-uuid';
@@ -34,7 +34,7 @@ export const branches: Branch[] = [
     branchId: MAIN_BRANCH,
     branchStart: '1970-01-01',
     branchEnd: null,
-    branchName: 'Life',
+    branchName: 'Main',
     branchSummary: 'The main timeline of your life.',
   },
   {

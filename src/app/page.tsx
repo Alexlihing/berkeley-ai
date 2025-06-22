@@ -276,6 +276,15 @@ export default function Home() {
     fetchBranches();
   }, []);
 
+  // Function to refresh all data
+  const refreshAllData = async () => {
+    await Promise.all([
+      fetchTree(),
+      fetchNodes(),
+      fetchBranches()
+    ]);
+  };
+
   // Function to format date
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -287,9 +296,19 @@ export default function Home() {
     });
   };
 
+  // Function to check if a branch is the main branch
+  const isMainBranch = (branch: Branch) => {
+    return branch.branchId === 'root' && branch.branchName === 'Main';
+  };
+
+  // Function to get nodes for a specific branch
+  const getNodesForBranch = (branchId: string) => {
+    return nodes.filter(node => node.branchId === branchId);
+  };
+
   return (
     <div className="w-screen h-screen overflow-hidden relative">
-      <Timeline />
+      <Timeline nodes={nodes} branches={branches} loading={loadingNodes || loadingBranches} />
       
       {/* View Mode Toggle */}
       <div className="absolute top-4 left-4 z-50">
@@ -324,11 +343,35 @@ export default function Home() {
           >
             Branches
           </button>
+          <button
+            onClick={refreshAllData}
+            disabled={loading || loadingNodes || loadingBranches}
+            className="px-3 py-1 rounded text-sm font-medium transition-colors bg-green-100 text-green-700 hover:bg-green-200 disabled:bg-gray-100 disabled:text-gray-400 flex items-center gap-1"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Refresh
+          </button>
+          <button
+            onClick={() => {
+              const w = window as any;
+              if (w.autoFitToData) {
+                w.autoFitToData();
+              }
+            }}
+            className="px-3 py-1 rounded text-sm font-medium transition-colors bg-blue-100 text-blue-700 hover:bg-blue-200 flex items-center gap-1"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            </svg>
+            Auto-Fit
+          </button>
         </div>
       </div>
 
       {/* Data Display Panel */}
-      <div className="absolute top-4 right-4 z-50 max-w-md">
+      <div className="absolute bottom-4 left-4 z-50 max-w-md">
         <div className="bg-white rounded-lg shadow-lg p-4 max-h-96 overflow-y-auto">
           <h3 className="text-lg font-semibold mb-3 text-gray-800">
             {viewMode === 'tree' && 'Tree Overview'}
@@ -345,22 +388,49 @@ export default function Home() {
               {loading ? (
                 <div className="text-gray-500">Loading tree...</div>
               ) : stats ? (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <div className="text-sm">
                     <span className="font-medium">Total Nodes:</span> {stats.totalNodes}
                   </div>
                   <div className="text-sm">
                     <span className="font-medium">Total Branches:</span> {stats.totalBranches}
                   </div>
-                  {stats.nodesByBranch && (
-                    <div className="text-sm">
-                      <span className="font-medium">Nodes by Branch:</span>
-                      <div className="ml-2 mt-1 space-y-1">
-                        {stats.nodesByBranch.map((branch, index) => (
-                          <div key={index} className="text-xs text-gray-600">
-                            {branch.nodeCount} nodes
-                          </div>
-                        ))}
+                  
+                  {/* Main Branch Info */}
+                  {branches.length > 0 && (
+                    <div className="border-t pt-2">
+                      <div className="text-sm font-medium text-gray-800 mb-2">Branches:</div>
+                      <div className="space-y-2">
+                        {branches.map((branch) => {
+                          const isMain = isMainBranch(branch);
+                          const nodeCount = getNodesForBranch(branch.branchId).length;
+                          
+                          return (
+                            <div 
+                              key={branch.branchId}
+                              className={`text-xs p-2 rounded ${
+                                isMain 
+                                  ? 'bg-purple-100 border border-purple-200' 
+                                  : 'bg-gray-100'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className={`font-medium ${isMain ? 'text-purple-800' : 'text-gray-700'}`}>
+                                  {branch.branchName}
+                                  {isMain && (
+                                    <span className="ml-1 text-purple-600">(Main)</span>
+                                  )}
+                                </span>
+                                <span className="text-gray-500">{nodeCount} nodes</span>
+                              </div>
+                              {branch.branchSummary && (
+                                <div className="text-gray-600 mt-1">
+                                  {branch.branchSummary}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -406,30 +476,54 @@ export default function Home() {
                 <div className="text-gray-500">Loading branches...</div>
               ) : branches.length > 0 ? (
                 <div className="space-y-3">
-                  {branches.map((branch) => (
-                    <div key={branch.branchId} className="border-l-4 border-green-500 pl-3 py-2 bg-green-50 rounded-r">
-                      <div className="text-sm font-medium text-gray-800">
-                        {branch.branchName}
-                      </div>
-                      <div className="text-xs text-gray-600 mt-1">
-                        {branch.branchSummary}
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        Started: {formatDate(branch.branchStart)}
-                      </div>
-                      {branch.branchEnd && (
-                        <div className="text-xs text-gray-500">
-                          Ended: {formatDate(branch.branchEnd)}
+                  {branches.map((branch) => {
+                    const isMain = isMainBranch(branch);
+                    const nodeCount = getNodesForBranch(branch.branchId).length;
+                    
+                    return (
+                      <div 
+                        key={branch.branchId} 
+                        className={`border-l-4 pl-3 py-2 rounded-r ${
+                          isMain 
+                            ? 'border-purple-500 bg-purple-50' 
+                            : 'border-green-500 bg-green-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-medium text-gray-800">
+                            {branch.branchName}
+                            {isMain && (
+                              <span className="ml-2 text-xs bg-purple-200 text-purple-800 px-2 py-1 rounded">
+                                MAIN
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {nodeCount} node{nodeCount !== 1 ? 's' : ''}
+                          </div>
                         </div>
-                      )}
-                      <div className="text-xs text-gray-400 mt-1">
-                        ID: {branch.branchId.slice(0, 8)}...
-                        {branch.parentBranchId && (
-                          <span className="ml-2">Parent: {branch.parentBranchId.slice(0, 8)}...</span>
+                        <div className="text-xs text-gray-600 mt-1">
+                          {branch.branchSummary}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          Started: {formatDate(branch.branchStart)}
+                        </div>
+                        {branch.branchEnd && (
+                          <div className="text-xs text-gray-500">
+                            Ended: {formatDate(branch.branchEnd)}
+                          </div>
                         )}
+                        <div className="text-xs text-gray-400 mt-1">
+                          ID: {branch.branchId === 'root' ? 'root' : branch.branchId.slice(0, 8) + '...'}
+                          {branch.parentBranchId && branch.parentBranchId !== '' && (
+                            <span className="ml-2">
+                              Parent: {branch.parentBranchId === 'root' ? 'root' : branch.parentBranchId.slice(0, 8) + '...'}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="text-gray-500">No branches available</div>
