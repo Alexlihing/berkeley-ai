@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Vapi from '@vapi-ai/web';
+import Timeline from '@/components/Timeline';
 
 interface Recommendation {
   id: string;
@@ -39,6 +40,24 @@ interface TreeStats {
   recentActivity?: string[];
 }
 
+// Add interfaces for Node and Branch from the API
+interface Node {
+  uuid: string;
+  branchId: string;
+  timeStamp: string;
+  content: string;
+  isUpdating: boolean;
+}
+
+interface Branch {
+  parentBranchId: string;
+  branchId: string;
+  branchStart: string;
+  branchEnd: string;
+  branchName: string;
+  branchSummary: string;
+}
+
 export default function Home() {
   const [tree, setTree] = useState<TreeNode | null>(null);
   const [stats, setStats] = useState<TreeStats | null>(null);
@@ -52,6 +71,13 @@ export default function Home() {
   const [assistantId, setAssistantId] = useState<string>('93287982-e8ea-4b30-8515-bf5ea783c2cf');
   const [showConfig, setShowConfig] = useState(false);
   const vapiRef = useRef<Vapi | null>(null);
+
+  // Add new state for nodes and branches
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [loadingNodes, setLoadingNodes] = useState(false);
+  const [loadingBranches, setLoadingBranches] = useState(false);
+  const [viewMode, setViewMode] = useState<'tree' | 'nodes' | 'branches'>('tree');
 
   const fetchTree = async () => {
     setLoading(true);
@@ -78,6 +104,62 @@ export default function Home() {
       setError(`Failed to fetch tree data: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Add function to fetch nodes separately
+  const fetchNodes = async () => {
+    setLoadingNodes(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/tree?action=nodes');
+      console.log('Nodes response status:', response.status);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('Nodes data:', data);
+      
+      if (data.success) {
+        setNodes(data.nodes);
+      } else {
+        setError(data.error || 'Failed to fetch nodes');
+      }
+    } catch (err) {
+      console.error('Error fetching nodes:', err);
+      setError(`Failed to fetch nodes: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setLoadingNodes(false);
+    }
+  };
+
+  // Add function to fetch branches separately
+  const fetchBranches = async () => {
+    setLoadingBranches(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/tree?action=branches');
+      console.log('Branches response status:', response.status);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('Branches data:', data);
+      
+      if (data.success) {
+        setBranches(data.branches);
+      } else {
+        setError(data.error || 'Failed to fetch branches');
+      }
+    } catch (err) {
+      console.error('Error fetching branches:', err);
+      setError(`Failed to fetch branches: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setLoadingBranches(false);
     }
   };
 
@@ -113,6 +195,7 @@ export default function Home() {
 
   const startVapiCall = async () => {
     // For client-side, we need to use NEXT_PUBLIC_ prefix
+    console.log('Starting Vapi call');
     const apiKey = process.env.NEXT_PUBLIC_VAPI_API_KEY;
     
     if (!apiKey) {
@@ -144,6 +227,8 @@ export default function Home() {
         console.log('Call ended');
         setIsCallActive(false);
         fetchTree(); // Refresh tree data after call ends
+        fetchNodes(); // Refresh nodes data after call ends
+        fetchBranches(); // Refresh branches data after call ends
       });
 
       vapiRef.current.on('message', (message) => {
@@ -205,295 +290,279 @@ export default function Home() {
   };
 
   useEffect(() => {
-    fetchTree();
+    refreshAllData();
   }, []);
 
+  // Function to refresh all data
+  const refreshAllData = async () => {
+    await Promise.all([
+      fetchTree(),
+      fetchNodes(),
+      fetchBranches()
+    ]);
+  };
+
+  // Function to format date
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  // Function to check if a branch is the main branch
+  const isMainBranch = (branch: Branch) => {
+    return branch.branchId === 'root' && branch.branchName === 'Main';
+  };
+
+  // Function to get nodes for a specific branch
+  const getNodesForBranch = (branchId: string) => {
+    return nodes.filter(node => node.branchId === branchId);
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">
-            Life Tree - Git Style
-          </h1>
-          <p className="text-lg text-gray-600 mb-6">
-            Your life as a branching timeline, controlled by voice
-          </p>
-          
-          {/* Configuration Section */}
-          <div className="mb-6">
-            <button
-              onClick={() => setShowConfig(!showConfig)}
-              className="text-blue-600 hover:text-blue-800 underline"
-            >
-              {showConfig ? 'Hide' : 'Show'} Setup Instructions
-            </button>
-            
-            {showConfig && (
-              <div className="mt-4 bg-white rounded-lg shadow p-6 text-left max-w-2xl mx-auto">
-                <h3 className="text-lg font-semibold mb-4">Setup Instructions</h3>
-                
-                <div className="space-y-4">
-                  <div>
-                    <h4 className="font-medium">1. Create Vapi Assistant</h4>
-                    <p className="text-sm text-gray-600">
-                      Go to <a href="https://dashboard.vapi.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600">Vapi Dashboard</a> and create a new assistant.
-                    </p>
+    <div className="w-screen h-screen overflow-hidden relative">
+      <Timeline nodes={nodes} branches={branches} loading={loadingNodes || loadingBranches} />
+      
+      {/* View Mode Toggle */}
+      <div className="absolute top-4 left-4 z-50">
+        <div className="bg-white rounded-lg shadow-lg p-2 flex gap-2">
+          <button
+            onClick={() => setViewMode('tree')}
+            className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+              viewMode === 'tree' 
+                ? 'bg-blue-600 text-white' 
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            Tree
+          </button>
+          <button
+            onClick={() => setViewMode('nodes')}
+            className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+              viewMode === 'nodes' 
+                ? 'bg-blue-600 text-white' 
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            Nodes
+          </button>
+          <button
+            onClick={() => setViewMode('branches')}
+            className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+              viewMode === 'branches' 
+                ? 'bg-blue-600 text-white' 
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            Branches
+          </button>
+          <button
+            onClick={refreshAllData}
+            disabled={loading || loadingNodes || loadingBranches}
+            className="px-3 py-1 rounded text-sm font-medium transition-colors bg-green-100 text-green-700 hover:bg-green-200 disabled:bg-gray-100 disabled:text-gray-400 flex items-center gap-1"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Refresh
+          </button>
+          <button
+            onClick={() => {
+              const w = window as any;
+              if (w.autoFitToData) {
+                w.autoFitToData();
+              }
+            }}
+            className="px-3 py-1 rounded text-sm font-medium transition-colors bg-blue-100 text-blue-700 hover:bg-blue-200 flex items-center gap-1"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            </svg>
+            Auto-Fit
+          </button>
+        </div>
+      </div>
+
+      {/* Data Display Panel */}
+      <div className="absolute bottom-4 left-4 z-50 max-w-md">
+        <div className="bg-white rounded-lg shadow-lg p-4 max-h-96 overflow-y-auto">
+          <h3 className="text-lg font-semibold mb-3 text-gray-800">
+            {viewMode === 'tree' && 'Tree Overview'}
+            {viewMode === 'nodes' && 'All Nodes'}
+            {viewMode === 'branches' && 'All Branches'}
+          </h3>
+
+          {error && (
+            <div className="text-red-600 text-sm mb-3">{error}</div>
+          )}
+
+          {viewMode === 'tree' && (
+            <div>
+              {loading ? (
+                <div className="text-gray-500">Loading tree...</div>
+              ) : stats ? (
+                <div className="space-y-3">
+                  <div className="text-sm">
+                    <span className="font-medium">Total Nodes:</span> {stats.totalNodes}
+                  </div>
+                  <div className="text-sm">
+                    <span className="font-medium">Total Branches:</span> {stats.totalBranches}
                   </div>
                   
-                  <div>
-                    <h4 className="font-medium">2. Configure Assistant</h4>
-                    <p className="text-sm text-gray-600">
-                      Use these settings for your assistant:
-                    </p>
-                    <ul className="text-sm text-gray-600 ml-4 mt-2">
-                      <li>• Name: "Life Tree Assistant"</li>
-                      <li>• First Message: "Hello! I'm your life tree assistant..."</li>
-                      <li>• Model: GPT-4o</li>
-                      <li>• Voice: 11labs (voice ID: 21m00Tcm4TlvDq8ikWAM)</li>
-                    </ul>
-                  </div>
-                  
-                  <div>
-                    <h4 className="font-medium">3. Add Tools</h4>
-                    <button
-                      onClick={getVapiTools}
-                      className="text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200"
-                    >
-                      Get Tools Configuration
-                    </button>
-                    <p className="text-sm text-gray-600 mt-1">
-                      Copy the tools from the console and add them to your assistant.
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <h4 className="font-medium">4. Set Webhook URL</h4>
-                    <p className="text-sm text-gray-600">
-                      Set webhook URL to: <code className="bg-gray-100 px-2 py-1 rounded">https://your-domain.com/api/webhook/vapi</code>
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <h4 className="font-medium">5. Enter Assistant ID</h4>
-                    <div className="flex gap-2 mt-2">
-                      <input
-                        type="text"
-                        placeholder="Enter your Assistant ID"
-                        value={assistantId}
-                        onChange={(e) => setAssistantId(e.target.value)}
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                      <button
-                        onClick={() => localStorage.setItem('vapi_assistant_id', assistantId)}
-                        className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
-                      >
-                        Save
-                      </button>
+                  {/* Main Branch Info */}
+                  {branches.length > 0 && (
+                    <div className="border-t pt-2">
+                      <div className="text-sm font-medium text-gray-800 mb-2">Branches:</div>
+                      <div className="space-y-2">
+                        {branches.map((branch) => {
+                          const isMain = isMainBranch(branch);
+                          const nodeCount = getNodesForBranch(branch.branchId).length;
+                          
+                          return (
+                            <div 
+                              key={branch.branchId}
+                              className={`text-xs p-2 rounded ${
+                                isMain 
+                                  ? 'bg-purple-100 border border-purple-200' 
+                                  : 'bg-gray-100'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className={`font-medium ${isMain ? 'text-purple-800' : 'text-gray-700'}`}>
+                                  {branch.branchName}
+                                  {isMain && (
+                                    <span className="ml-1 text-purple-600">(Main)</span>
+                                  )}
+                                </span>
+                                <span className="text-gray-500">{nodeCount} nodes</span>
+                              </div>
+                              {branch.branchSummary && (
+                                <div className="text-gray-600 mt-1">
+                                  {branch.branchSummary}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
-              </div>
-            )}
-          </div>
-          
-          <div className="flex justify-center mb-4">
-            {!isCallActive ? (
-              <button
-                onClick={startVapiCall}
-                disabled={loading}
-                className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
-              >
-                🎤 Start Voice Call
-              </button>
-            ) : (
-              <button
-                onClick={stopVapiCall}
-                className="bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors"
-              >
-                🛑 End Call
-              </button>
-            )}
-          </div>
-
-          <div className="flex justify-center gap-4 mb-4">
-            <button
-              onClick={async () => {
-                try {
-                  const response = await fetch('/api/tree/sample', { method: 'POST' });
-                  const data = await response.json();
-                  if (data.success) {
-                    fetchTree(); // Refresh the tree
-                  } else {
-                    setError('Failed to generate sample data');
-                  }
-                } catch (err) {
-                  setError('Failed to generate sample data');
-                }
-              }}
-              className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
-            >
-              📊 Generate Sample Data
-            </button>
-            <button
-              onClick={fetchTree}
-              className="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
-            >
-              🔄 Refresh Tree
-            </button>
-          </div>
-
-          {/* Recommendations Section */}
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold mb-3">🤖 AI Recommendations</h3>
-            <div className="flex justify-center gap-2 mb-4">
-              <button
-                onClick={() => fetchRecommendations()}
-                className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
-              >
-                📋 All Recommendations
-              </button>
-              <button
-                onClick={() => fetchRecommendations(undefined, 'high')}
-                className="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
-              >
-                ⚡ High Priority
-              </button>
-              <button
-                onClick={() => fetchRecommendations('close_path')}
-                className="bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
-              >
-                🔚 Close Paths
-              </button>
-              <button
-                onClick={() => fetchRecommendations('start_new_path')}
-                className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
-              >
-                🌱 New Paths
-              </button>
+              ) : (
+                <div className="text-gray-500">No tree data available</div>
+              )}
             </div>
+          )}
 
-            {loadingRecommendations && (
-              <div className="text-center py-4">
-                <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-purple-600"></div>
-                <p className="mt-2 text-gray-600">Analyzing your life tree...</p>
-              </div>
-            )}
-
-            {recommendations.length > 0 && (
-              <div className="bg-white rounded-lg shadow p-6 mb-6">
-                <h4 className="text-lg font-semibold mb-4">💡 Recommendations for You</h4>
-                <div className="space-y-4">
-                  {recommendations.map((rec, index) => (
-                    <div key={rec.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-                      <div className="flex items-start justify-between mb-2">
-                        <h5 className="font-semibold text-gray-900">{rec.title}</h5>
-                        <div className="flex gap-2">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            rec.priority === 'high' ? 'bg-red-100 text-red-800' :
-                            rec.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                            'bg-green-100 text-green-800'
-                          }`}>
-                            {rec.priority}
-                          </span>
-                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                            {rec.type.replace('_', ' ')}
-                          </span>
-                        </div>
+          {viewMode === 'nodes' && (
+            <div>
+              {loadingNodes ? (
+                <div className="text-gray-500">Loading nodes...</div>
+              ) : nodes.length > 0 ? (
+                <div className="space-y-3">
+                  {nodes.map((node) => (
+                    <div key={node.uuid} className="border-l-4 border-blue-500 pl-3 py-2 bg-blue-50 rounded-r">
+                      <div className="text-sm font-medium text-gray-800">
+                        {node.content.substring(0, 50)}...
                       </div>
-                      <p className="text-gray-700 mb-3">{rec.description}</p>
-                      <div className="bg-gray-50 rounded p-3 mb-3">
-                        <p className="text-sm text-gray-600 mb-2"><strong>Reasoning:</strong></p>
-                        <p className="text-sm text-gray-700">{rec.reasoning}</p>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {formatDate(node.timeStamp)}
                       </div>
-                      <div>
-                        <p className="text-sm text-gray-600 mb-2"><strong>Suggested Actions:</strong></p>
-                        <ul className="text-sm text-gray-700 space-y-1">
-                          {rec.suggestedActions.map((action, actionIndex) => (
-                            <li key={actionIndex} className="flex items-start">
-                              <span className="text-blue-500 mr-2">•</span>
-                              {action}
-                            </li>
-                          ))}
-                        </ul>
+                      <div className="text-xs text-gray-400">
+                        Branch: {node.branchId.slice(0, 8)}...
+                        {node.isUpdating && (
+                          <span className="ml-2 text-orange-600">• Updating</span>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
-          </div>
-
-          {isCallActive && (
-            <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
-              🎤 Call Active - Speak to add to your life tree!
+              ) : (
+                <div className="text-gray-500">No nodes available</div>
+              )}
             </div>
           )}
 
-          {transcript && (
-            <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4">
-              <strong>Latest:</strong> {transcript}
-            </div>
-          )}
-
-          {messages.length > 0 && (
-            <div className="bg-gray-100 border border-gray-400 text-gray-700 px-4 py-3 rounded mb-4 max-h-40 overflow-y-auto">
-              <strong>Conversation:</strong>
-              {messages.map((msg, index) => (
-                <div key={index} className="text-sm mt-1">
-                  <span className="font-semibold">{msg.role}:</span> {msg.transcript}
+          {viewMode === 'branches' && (
+            <div>
+              {loadingBranches ? (
+                <div className="text-gray-500">Loading branches...</div>
+              ) : branches.length > 0 ? (
+                <div className="space-y-3">
+                  {branches.map((branch) => {
+                    const isMain = isMainBranch(branch);
+                    const nodeCount = getNodesForBranch(branch.branchId).length;
+                    
+                    return (
+                      <div 
+                        key={branch.branchId} 
+                        className={`border-l-4 pl-3 py-2 rounded-r ${
+                          isMain 
+                            ? 'border-purple-500 bg-purple-50' 
+                            : 'border-green-500 bg-green-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-medium text-gray-800">
+                            {branch.branchName}
+                            {isMain && (
+                              <span className="ml-2 text-xs bg-purple-200 text-purple-800 px-2 py-1 rounded">
+                                MAIN
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {nodeCount} node{nodeCount !== 1 ? 's' : ''}
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-600 mt-1">
+                          {branch.branchSummary}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          Started: {formatDate(branch.branchStart)}
+                        </div>
+                        {branch.branchEnd && (
+                          <div className="text-xs text-gray-500">
+                            Ended: {formatDate(branch.branchEnd)}
+                          </div>
+                        )}
+                        <div className="text-xs text-gray-400 mt-1">
+                          ID: {branch.branchId === 'root' ? 'root' : branch.branchId.slice(0, 8) + '...'}
+                          {branch.parentBranchId && branch.parentBranchId !== '' && (
+                            <span className="ml-2">
+                              Parent: {branch.parentBranchId === 'root' ? 'root' : branch.parentBranchId.slice(0, 8) + '...'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+              ) : (
+                <div className="text-gray-500">No branches available</div>
+              )}
             </div>
           )}
         </div>
+      </div>
 
-        {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
-            {error}
-          </div>
-        )}
-
-        {stats && (
-          <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <h2 className="text-xl font-semibold mb-4">Tree Statistics</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-blue-600">{stats.totalNodes}</div>
-                <div className="text-sm text-gray-600">Total Nodes</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-green-600">{stats.totalBranches}</div>
-                <div className="text-sm text-gray-600">Branches</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-yellow-600">{stats.nodesByBranch?.filter(b => b.nodeCount > 0).length || 0}</div>
-                <div className="text-sm text-gray-600">Active</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-gray-600">{stats.recentActivity?.length || 0}</div>
-                <div className="text-sm text-gray-600">Recent</div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {tree && (
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-xl font-semibold mb-4">Life Tree (JSON)</h2>
-            <div className="bg-gray-100 rounded p-4 overflow-auto max-h-96">
-              <pre className="text-sm text-gray-800 whitespace-pre-wrap">
-                {JSON.stringify(tree, null, 2)}
-              </pre>
-            </div>
-          </div>
-        )}
-
-        {loading && (
-          <div className="text-center py-8">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="mt-2 text-gray-600">Loading...</p>
-          </div>
-        )}
+      {/* Floating Voice Call Button */}
+      <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-50">
+        <button
+          onClick={isCallActive ? stopVapiCall : startVapiCall}
+          disabled={loading}
+          className={`font-semibold py-3 px-8 rounded-lg text-lg transition-colors shadow-lg border ${
+            isCallActive 
+              ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white border-red-500' 
+              : 'bg-white hover:bg-gray-100 disabled:bg-gray-300 text-black border-gray-200'
+          }`}
+        >
+          {isCallActive ? '🛑 Stop Call' : '🎤 Start Voice Call'}
+        </button>
       </div>
     </div>
   );
