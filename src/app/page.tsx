@@ -33,20 +33,7 @@ const GridMarkers = ({
   const startDate = new Date(visibleStartMs);
   const endDate = new Date(visibleEndMs);
 
-  const baseFontSize = 16;
-  const referenceWidth = 1920; // A standard reference viewport width
-  const responsiveFontSize = baseFontSize * (viewBox.w / referenceWidth);
-
-  const textStyle: React.SVGProps<SVGTextElement> = {
-    fill: 'white',
-    fontFamily: 'serif',
-    dominantBaseline: 'text-before-edge',
-    fontSize: responsiveFontSize,
-  };
-
-  const addMarker = (date: Date, label: string, strokeWidth: number, key: string) => {
-    const x = dateToX(date);
-    
+  const addMarker = (date: Date, label: string, strokeWidth: number, key: string, brightness: number) => {
     // Don't show any markers before the birthday
     if (date.getTime() < timelineStartDate.getTime()) {
       return;
@@ -54,64 +41,170 @@ const GridMarkers = ({
     
     const showWhiteTick = date.getTime() <= new Date().getTime(); // Only show white ticks up to present
     
+    // Calculate gray color with very steep curve for stark contrast
+    // Use much steeper exponential curve to make transitions extremely dramatic
+    const adjustedBrightness = Math.pow(brightness, 0.15); // Much steeper curve
+    const grayValue = Math.round(30 + adjustedBrightness * (140 - 30)); // From #1E1E1E to #8C8C8C
+    const grayColor = `rgb(${grayValue}, ${grayValue}, ${grayValue})`;
+    
+    const OPACITY_THRESHOLD = 0.05;
+    const opacity = adjustedBrightness;
+
+    if (opacity < OPACITY_THRESHOLD) {
+      // Skip rendering extremely faint lines to avoid overdraw and flicker
+      return;
+    }
+    
+    // Clamped scaling for grid lines - use constant pixel width to avoid aliasing flicker
+    const gridStrokeWidth = 2; // constant 2px for stable appearance
+    
+    // Constant tick mark stroke width as well
+    const tickStrokeWidth = 2;
+    
+    const x = dateToX(date);
+    
+    // Align to pixel grid for crisp rendering (avoid flicker)
+    const xAligned = Math.round(x) + 0.5; // Center on pixel for even stroke widths
+    
     markers.push(
       <g key={key}>
         <line
-          x1={x}
+          x1={xAligned}
           y1={viewBox.y - viewBox.h}
-          x2={x}
+          x2={xAligned}
           y2={viewBox.y + viewBox.h * 2}
-          stroke="#444"
-          strokeWidth={strokeWidth * 2}
+          stroke={grayColor}
+          strokeWidth={gridStrokeWidth}
+          strokeOpacity={opacity}
+          shapeRendering="crispEdges"
           vectorEffect="non-scaling-stroke"
         />
         {showWhiteTick && (
           <line
-            x1={x}
+            x1={xAligned}
             y1={timelineHeight / 2 - 15 * (viewBox.w / 1920)}
-            x2={x}
+            x2={xAligned}
             y2={timelineHeight / 2 + 15 * (viewBox.w / 1920)}
             stroke="white"
-            strokeWidth={(strokeWidth + 0.5) * 2}
+            strokeWidth={tickStrokeWidth}
+            strokeOpacity={opacity}
+            shapeRendering="crispEdges"
             vectorEffect="non-scaling-stroke"
           />
         )}
       </g>
     );
   };
-  
-  if (visibleYears > 50) {
+
+  const minSpacing = 30; // Minimum pixels between markers
+  const maxSpacing = 120; // Maximum spacing for full brightness
+  const scale = viewBox.w / (typeof window !== 'undefined' ? window.innerWidth : 1920);
+
+  // Calculate spacing in SVG coordinates
+  const minSvgSpacing = minSpacing * scale;
+
+  // virtualization helper
+  const EXTRA_RENDER_MARGIN = viewBox.w * 2; // render 2x viewport out of view
+  const isXInRenderRange = (xCoord: number) => xCoord >= viewBox.x - EXTRA_RENDER_MARGIN && xCoord <= viewBox.x + viewBox.w + EXTRA_RENDER_MARGIN;
+
+  // Helper function to compute brightness based on spacing (no hard visibility toggle)
+  const calcBrightness = (interval: number, unit: 'year' | 'month' | 'day' | 'hour' | 'minute') => {
+    let testDate1: Date = new Date();
+    let testDate2: Date = new Date();
+    if (unit === 'year') {
+      testDate1 = new Date(2000, 0, 1);
+      testDate2 = new Date(2000 + interval, 0, 1);
+    } else if (unit === 'month') {
+      testDate1 = new Date(2000, 0, 1);
+      testDate2 = new Date(2000, interval, 1);
+    } else if (unit === 'day') {
+      testDate1 = new Date(2000, 0, 1);
+      testDate2 = new Date(2000, 0, 1 + interval);
+    } else if (unit === 'hour') {
+      testDate1 = new Date(2000, 0, 1, 0, 0, 0);
+      testDate2 = new Date(2000, 0, 1, interval, 0, 0);
+    } else if (unit === 'minute') {
+      testDate1 = new Date(2000, 0, 1, 0, 0, 0);
+      testDate2 = new Date(2000, 0, 1, 0, interval, 0);
+    }
+    
+    const x1 = dateToX(testDate1);
+    const x2 = dateToX(testDate2);
+    const pixelSpacing = Math.abs(x2 - x1) / scale; // Convert back to screen pixels
+
+    const brightness = Math.min(1, Math.max(0, (pixelSpacing - minSpacing) / (maxSpacing - minSpacing)));
+    return brightness;
+  };
+
+  // Show decade markers
+  const decadeBrightness = calcBrightness(10, 'year');
+  if (decadeBrightness > 0) {
     let year = Math.floor(startDate.getFullYear() / 10) * 10;
     for (let d = new Date(year, 0, 1); d.getFullYear() <= endDate.getFullYear(); d.setFullYear(d.getFullYear() + 10)) {
-      addMarker(d, `${d.getFullYear()}`, 1, `10y-${d.getFullYear()}`);
+      addMarker(d, `${d.getFullYear()}`, 1, `10y-${d.getFullYear()}`, decadeBrightness);
     }
-  } else if (visibleYears > 20) {
+  }
+
+  // Show 5-year markers
+  const fiveYearBrightness = calcBrightness(5, 'year');
+  if (fiveYearBrightness > 0) {
     let year = Math.floor(startDate.getFullYear() / 5) * 5;
     for (let d = new Date(year, 0, 1); d.getFullYear() <= endDate.getFullYear(); d.setFullYear(d.getFullYear() + 5)) {
-      addMarker(d, `${d.getFullYear()}`, 1, `5y-${d.getFullYear()}`);
+      addMarker(d, `${d.getFullYear()}`, 0.9, `5y-${d.getFullYear()}`, fiveYearBrightness);
     }
-  } else if (visibleYears > 1) {
-     for (let year = startDate.getFullYear(); year <= endDate.getFullYear(); year++) {
-        addMarker(new Date(year, 0, 1), `${year}`, 0.75, `1y-${year}`);
-     }
-  } else if (visibleDays > 30) {
+  }
+
+  // Yearly markers
+  const yearBrightness = calcBrightness(1, 'year');
+  if (yearBrightness > 0) {
+    for (let year = startDate.getFullYear(); year <= endDate.getFullYear(); year++) {
+      addMarker(new Date(year, 0, 1), `${year}`, 0.75, `1y-${year}`, yearBrightness);
+    }
+  }
+
+  // Month markers
+  const monthBrightness = calcBrightness(1, 'month');
+  if (monthBrightness > 0) {
     let d = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
     for (; d.getTime() <= visibleEndMs; d.setMonth(d.getMonth() + 1)) {
       const label = `${d.toLocaleString('default', { month: 'short' })}-${d.getFullYear()}`;
-      addMarker(d, label, 0.5, `month-${d.toISOString()}`);
+      addMarker(d, label, 0.5, `month-${d.toISOString()}`, monthBrightness);
     }
-  } else if (visibleDays > 1) {
+  }
+
+  // Day markers
+  const dayBrightness = calcBrightness(1, 'day');
+  if (dayBrightness > 0) {
     let d = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
     for (; d.getTime() <= visibleEndMs; d.setDate(d.getDate() + 1)) {
       const label = `${d.getDate()}-${d.toLocaleString('default', { month: 'short' })}-${d.getFullYear()}`;
-      addMarker(d, label, 0.25, `day-${d.toISOString()}`);
+      addMarker(d, label, 0.25, `day-${d.toISOString()}`, dayBrightness);
     }
-      } else {
+  }
+
+  // Hour markers
+  const hourBrightness = calcBrightness(1, 'hour');
+  if (hourBrightness > 0) {
     let d = new Date(startDate.getTime());
     d.setMinutes(0,0,0);
     for (; d.getTime() <= visibleEndMs; d.setHours(d.getHours() + 1)) {
-      const label = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-      addMarker(d, label, 0.25, `hour-${d.toISOString()}`);
+      const xTmp = dateToX(d);
+      if (!isXInRenderRange(xTmp)) continue;
+      const label = `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+      addMarker(d, label, 0.25, `hour-${d.toISOString()}`, hourBrightness);
+    }
+  }
+
+  // Minute markers
+  const minuteBrightness = calcBrightness(1, 'minute');
+  if (minuteBrightness > 0) {
+    let d = new Date(startDate.getTime());
+    d.setSeconds(0,0);
+    for (; d.getTime() <= visibleEndMs; d.setMinutes(d.getMinutes() + 1)) {
+      const xTmp = dateToX(d);
+      if (!isXInRenderRange(xTmp)) continue;
+      const label = `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+      addMarker(d, label, 0.25, `min-${d.toISOString()}`, minuteBrightness);
     }
   }
 
@@ -159,35 +252,90 @@ const TimeLabels = ({
     labels.push({ x: svgX, text, key });
   };
 
-  if (visibleYears > 50) {
+  const minSpacing = 80; // Minimum pixels between labels (larger than grid markers)
+  const scale = viewBox.w / (typeof window !== 'undefined' ? window.innerWidth : 1920);
+  const minSvgSpacing = minSpacing * scale;
+
+  // Helper function to check if labels would be too close
+  const wouldLabelsBeSpaced = (interval: number, unit: 'year' | 'month' | 'day' | 'hour' | 'minute') => {
+    let testDate1: Date = new Date();
+    let testDate2: Date = new Date();
+    if (unit === 'year') {
+      testDate1 = new Date(2000, 0, 1);
+      testDate2 = new Date(2000 + interval, 0, 1);
+    } else if (unit === 'month') {
+      testDate1 = new Date(2000, 0, 1);
+      testDate2 = new Date(2000, interval, 1);
+    } else if (unit === 'day') {
+      testDate1 = new Date(2000, 0, 1);
+      testDate2 = new Date(2000, 0, 1 + interval);
+    } else if (unit === 'hour') {
+      testDate1 = new Date(2000, 0, 1, 0, 0, 0);
+      testDate2 = new Date(2000, 0, 1, interval, 0, 0);
+    } else if (unit === 'minute') {
+      testDate1 = new Date(2000, 0, 1, 0, 0, 0);
+      testDate2 = new Date(2000, 0, 1, 0, interval, 0);
+    }
+    
+    const x1 = dateToX(testDate1);
+    const x2 = dateToX(testDate2);
+    return Math.abs(x2 - x1) >= minSvgSpacing;
+  };
+
+  // Show decade labels if they have enough spacing
+  if (wouldLabelsBeSpaced(10, 'year')) {
     let year = Math.floor(startDate.getFullYear() / 10) * 10;
     for (let d = new Date(year, 0, 1); d.getFullYear() <= endDate.getFullYear(); d.setFullYear(d.getFullYear() + 10)) {
       addLabel(d, `${d.getFullYear()}`, `10y-${d.getFullYear()}`);
     }
-  } else if (visibleYears > 20) {
+  }
+
+  // Show 5-year labels if they have enough spacing
+  if (wouldLabelsBeSpaced(5, 'year')) {
     let year = Math.floor(startDate.getFullYear() / 5) * 5;
     for (let d = new Date(year, 0, 1); d.getFullYear() <= endDate.getFullYear(); d.setFullYear(d.getFullYear() + 5)) {
       addLabel(d, `${d.getFullYear()}`, `5y-${d.getFullYear()}`);
     }
-  } else if (visibleYears > 1) {
+  }
+
+  // Show yearly labels if they have enough spacing
+  if (wouldLabelsBeSpaced(1, 'year')) {
     for (let year = startDate.getFullYear(); year <= endDate.getFullYear(); year++) {
       addLabel(new Date(year, 0, 1), `${year}`, `1y-${year}`);
     }
-  } else if (visibleDays > 30) {
+  }
+
+  // Show monthly labels if they have enough spacing
+  if (wouldLabelsBeSpaced(1, 'month')) {
     let d = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
     for (; d.getTime() <= visibleEndMs; d.setMonth(d.getMonth() + 1)) {
       addLabel(d, `${d.toLocaleString('default', { month: 'short' })}-${d.getFullYear()}`, `m-${d.toISOString()}`);
     }
-  } else if (visibleDays > 1) {
+  }
+
+  // Show daily labels if they have enough spacing
+  if (wouldLabelsBeSpaced(1, 'day')) {
     let d = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
     for (; d.getTime() <= visibleEndMs; d.setDate(d.getDate() + 1)) {
       addLabel(d, `${d.getDate()}-${d.toLocaleString('default', { month: 'short' })}-${d.getFullYear()}`, `d-${d.toISOString()}`);
     }
-      } else {
+  }
+
+  // Show hourly labels if they have enough spacing
+  if (wouldLabelsBeSpaced(1, 'hour')) {
     let d = new Date(startDate.getTime());
     d.setMinutes(0,0,0);
     for (; d.getTime() <= visibleEndMs; d.setHours(d.getHours() + 1)) {
       addLabel(d, `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`, `h-${d.toISOString()}`);
+    }
+  }
+
+  // Show minute labels if they have enough spacing
+  if (wouldLabelsBeSpaced(1, 'minute')) {
+    let d = new Date(startDate.getTime());
+    d.setSeconds(0,0);
+    for (; d.getTime() <= visibleEndMs; d.setMinutes(d.getMinutes() + 1)) {
+      addLabel(d, `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`, `min-${d.toISOString()}`);
     }
   }
 
@@ -208,9 +356,23 @@ const TimeLabels = ({
     return screenX;
   };
 
+  // Filter labels to prevent overlap
+  const filteredLabels = labels.filter((label, index) => {
+    if (index === 0) return true;
+    
+    const currentScreenX = convertSvgToScreenX(label.x);
+    const prevScreenX = convertSvgToScreenX(labels[index - 1].x);
+    
+    // Estimate text width (rough approximation)
+    const estimatedTextWidth = label.text.length * 8; // 8px per character
+    const minSpacing = estimatedTextWidth + 20; // Add 20px buffer
+    
+    return Math.abs(currentScreenX - prevScreenX) > minSpacing;
+  });
+
   return (
     <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
-      {labels.map(({ x, text, key }) => {
+      {filteredLabels.map(({ x, text, key }) => {
         const screenX = convertSvgToScreenX(x);
     return (
           <div
@@ -221,6 +383,7 @@ const TimeLabels = ({
               top: '8px',
               color: 'white',
               fontFamily: 'var(--font-lora), serif',
+              whiteSpace: 'nowrap',
             }}
           >
             {text}
