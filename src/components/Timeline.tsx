@@ -7,28 +7,33 @@ const SECONDS_IN_MINUTE = 60;
 const SECONDS_IN_HOUR = 60 * SECONDS_IN_MINUTE;
 const SECONDS_IN_DAY = 24 * SECONDS_IN_HOUR;
 const SECONDS_IN_WEEK = 7 * SECONDS_IN_DAY;
-const SECONDS_IN_YEAR = 365.25 * SECONDS_IN_DAY;
+const SECONDS_IN_MONTH = 30 * SECONDS_IN_DAY; // Approximate for step calculation only
+const SECONDS_IN_YEAR = 365.25 * SECONDS_IN_DAY; // Approximate for step calculation only
+
+// Birth date: 1 Jan 1970 00:00 UTC
+const BIRTH_DATE_EPOCH_SEC = 0; // Unix epoch
+
+// Left padding when near birth date (in pixels)
+const LEFT_PADDING = 100;
 
 // Candidate tick spacings (in seconds) ordered from fine → coarse
 const TICK_STEPS: number[] = [
-  1 * SECONDS_IN_MINUTE,
-  5 * SECONDS_IN_MINUTE,
-  15 * SECONDS_IN_MINUTE,
-  30 * SECONDS_IN_MINUTE,
-  1 * SECONDS_IN_HOUR,
-  3 * SECONDS_IN_HOUR,
-  6 * SECONDS_IN_HOUR,
-  12 * SECONDS_IN_HOUR,
-  1 * SECONDS_IN_DAY,
-  7 * SECONDS_IN_DAY,
-  30 * SECONDS_IN_DAY,       // ~1 month
-  90 * SECONDS_IN_DAY,       // ~3 months
-  180 * SECONDS_IN_DAY,      // ~6 months
-  365 * SECONDS_IN_DAY,      // 1 year
-  5 * SECONDS_IN_YEAR,
-  10 * SECONDS_IN_YEAR,
-  20 * SECONDS_IN_YEAR,
-  50 * SECONDS_IN_YEAR,
+  1 * SECONDS_IN_MINUTE,    // 1 min
+  5 * SECONDS_IN_MINUTE,    // 5 min
+  15 * SECONDS_IN_MINUTE,   // 15 min
+  30 * SECONDS_IN_MINUTE,   // 30 min
+  1 * SECONDS_IN_HOUR,      // 1 hour
+  3 * SECONDS_IN_HOUR,      // 3 hour
+  6 * SECONDS_IN_HOUR,      // 6 hour
+  12 * SECONDS_IN_HOUR,     // 12 hour
+  1 * SECONDS_IN_DAY,       // 1 day
+  7 * SECONDS_IN_DAY,       // 7 days
+  1 * SECONDS_IN_MONTH,     // 1 mth
+  3 * SECONDS_IN_MONTH,     // 3 mth
+  6 * SECONDS_IN_MONTH,     // 6 mth
+  1 * SECONDS_IN_YEAR,      // year
+  5 * SECONDS_IN_YEAR,      // 5 year
+  10 * SECONDS_IN_YEAR,     // 10 year
 ];
 
 /**
@@ -42,6 +47,131 @@ function chooseTickStep(secondsPerPx: number, minPx = 80): number {
 }
 
 /**
+ * Generate actual tick positions based on calendar dates
+ */
+function generateTicks(startEpochSec: number, endEpochSec: number, stepSec: number): number[] {
+  const ticks: number[] = [];
+  
+  if (stepSec < SECONDS_IN_HOUR) {
+    // Minutes: find a global reference point and generate from there
+    const stepMinutes = stepSec / SECONDS_IN_MINUTE;
+    // Use a fixed reference point (start of day) to ensure consistent positioning
+    const referenceDate = new Date(startEpochSec * 1000);
+    referenceDate.setHours(0, 0, 0, 0); // Start of the day in local timezone
+    
+    // Find the first tick at or before our start time
+    let current = new Date(referenceDate);
+    while (current.getTime() / 1000 > startEpochSec) {
+      current.setMinutes(current.getMinutes() - stepMinutes);
+    }
+    while (current.getTime() / 1000 < startEpochSec) {
+      current.setMinutes(current.getMinutes() + stepMinutes);
+    }
+    // Go back one step to ensure we start before the viewport
+    current.setMinutes(current.getMinutes() - stepMinutes);
+    
+    while (current.getTime() / 1000 <= endEpochSec) {
+      ticks.push(current.getTime() / 1000);
+      current.setMinutes(current.getMinutes() + stepMinutes);
+    }
+  } else if (stepSec < SECONDS_IN_DAY) {
+    // Hours: use start of day as reference
+    const stepHours = stepSec / SECONDS_IN_HOUR;
+    const referenceDate = new Date(startEpochSec * 1000);
+    referenceDate.setHours(0, 0, 0, 0); // Start of the day in local timezone
+    
+    let current = new Date(referenceDate);
+    while (current.getTime() / 1000 > startEpochSec) {
+      current.setHours(current.getHours() - stepHours);
+    }
+    while (current.getTime() / 1000 < startEpochSec) {
+      current.setHours(current.getHours() + stepHours);
+    }
+    current.setHours(current.getHours() - stepHours);
+    
+    while (current.getTime() / 1000 <= endEpochSec) {
+      ticks.push(current.getTime() / 1000);
+      current.setHours(current.getHours() + stepHours);
+    }
+  } else if (stepSec === 7 * SECONDS_IN_DAY) {
+    // Special case for 7 days (weeks): use Unix epoch as reference since it was a Thursday
+    // This ensures consistent weekly boundaries regardless of viewport
+    const epochThursday = new Date(1970, 0, 1); // Jan 1, 1970 was a Thursday
+    
+    // Find the most recent Monday before or at our start time
+    let current = new Date(startEpochSec * 1000);
+    current.setHours(0, 0, 0, 0);
+    
+    // Go back to the most recent Monday (day 1, where Sunday = 0)
+    const dayOfWeek = current.getDay();
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Sunday = 6 days back, others = dayOfWeek - 1
+    current.setDate(current.getDate() - daysToMonday);
+    
+    // Go back further to ensure we start before viewport
+    while (current.getTime() / 1000 > startEpochSec) {
+      current.setDate(current.getDate() - 7);
+    }
+    
+    while (current.getTime() / 1000 <= endEpochSec) {
+      ticks.push(current.getTime() / 1000);
+      current.setDate(current.getDate() + 7);
+    }
+  } else if (stepSec < SECONDS_IN_MONTH) {
+    // Days (other than 7): use start of month as reference
+    const stepDays = Math.round(stepSec / SECONDS_IN_DAY);
+    const referenceDate = new Date(startEpochSec * 1000);
+    referenceDate.setDate(1);
+    referenceDate.setHours(0, 0, 0, 0); // Start of the month in local timezone
+    
+    let current = new Date(referenceDate);
+    while (current.getTime() / 1000 > startEpochSec) {
+      current.setDate(current.getDate() - stepDays);
+    }
+    while (current.getTime() / 1000 < startEpochSec) {
+      current.setDate(current.getDate() + stepDays);
+    }
+    current.setDate(current.getDate() - stepDays);
+    
+    while (current.getTime() / 1000 <= endEpochSec) {
+      ticks.push(current.getTime() / 1000);
+      current.setDate(current.getDate() + stepDays);
+    }
+  } else if (stepSec < SECONDS_IN_YEAR) {
+    // Months: start from beginning of year
+    const stepMonths = Math.round(stepSec / SECONDS_IN_MONTH);
+    const startDate = new Date(startEpochSec * 1000);
+    const startYear = startDate.getFullYear(); // Use local timezone
+    
+    let current = new Date(startYear, 0, 1, 0, 0, 0, 0); // Local timezone
+    while (current.getTime() / 1000 > startEpochSec) {
+      current.setMonth(current.getMonth() - stepMonths);
+    }
+    while (current.getTime() / 1000 < startEpochSec) {
+      current.setMonth(current.getMonth() + stepMonths);
+    }
+    current.setMonth(current.getMonth() - stepMonths);
+    
+    while (current.getTime() / 1000 <= endEpochSec) {
+      ticks.push(current.getTime() / 1000);
+      current.setMonth(current.getMonth() + stepMonths);
+    }
+  } else {
+    // Years: start from beginning of year, align to proper year boundaries
+    const stepYears = Math.round(stepSec / SECONDS_IN_YEAR);
+    const startDate = new Date(startEpochSec * 1000);
+    const startYear = Math.floor(startDate.getFullYear() / stepYears) * stepYears; // Use local timezone
+    
+    let current = new Date(startYear, 0, 1, 0, 0, 0, 0); // Local timezone
+    while (current.getTime() / 1000 <= endEpochSec) {
+      ticks.push(current.getTime() / 1000);
+      current.setFullYear(current.getFullYear() + stepYears);
+    }
+  }
+  
+  return ticks;
+}
+
+/**
  * Format a label for a given UNIX timestamp (in seconds) according to the current step size.
  */
 function formatLabel(epochSec: number, stepSec: number) {
@@ -49,11 +179,11 @@ function formatLabel(epochSec: number, stepSec: number) {
 
   if (stepSec < SECONDS_IN_HOUR) {
     // up to minutes → HH:MM
-    return date.toISOString().substring(11, 16);
+    return date.toTimeString().substring(0, 5); // Use local timezone
   }
   if (stepSec < SECONDS_IN_DAY) {
     // hours → HH:00
-    return `${date.toISOString().substring(11, 13)}:00`;
+    return `${date.toTimeString().substring(0, 2)}:00`; // Use local timezone
   }
   if (stepSec < 30 * SECONDS_IN_DAY) {
     // days → MMM d
@@ -64,7 +194,7 @@ function formatLabel(epochSec: number, stepSec: number) {
     return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
   }
   // years → yyyy
-  return date.getUTCFullYear().toString();
+  return date.getFullYear().toString(); // Use local timezone
 }
 
 export default function Timeline() {
@@ -73,6 +203,9 @@ export default function Timeline() {
 
   // Canvas (CSS) pixel dimensions
   const [size, setSize] = useState({ width: 0, height: 0 });
+  
+  // Current time state (updated every minute)
+  const [currentTime, setCurrentTime] = useState(() => Date.now() / 1000);
 
   // State kept in refs to avoid re-render loops while panning/zooming
   const scaleSecPerPx = useRef<number>(1); // seconds represented by one CSS pixel
@@ -81,6 +214,15 @@ export default function Timeline() {
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
   const dragStartOffset = useRef(0);
+
+  // Update current time every minute
+  useEffect(() => {
+    const updateTime = () => setCurrentTime(Date.now() / 1000);
+    updateTime();
+    
+    const interval = setInterval(updateTime, 60000); // Update every minute
+    return () => clearInterval(interval);
+  }, []);
 
   // ───────────────────────── Resize handling ──────────────────────────
   useEffect(() => {
@@ -107,12 +249,15 @@ export default function Timeline() {
     scaleSecPerPx.current = Math.max(Math.min(SECONDS_IN_YEAR / size.width, minSecPerPx), maxSecPerPx);
 
     // centre "now" roughly in the middle
-    const now = Date.now() / 1000;
-    offsetEpochSec.current = now - (scaleSecPerPx.current * size.width) / 2;
+    offsetEpochSec.current = currentTime - (scaleSecPerPx.current * size.width) / 2;
+
+    // Ensure we don't pan before birth date
+    const minOffset = BIRTH_DATE_EPOCH_SEC;
+    offsetEpochSec.current = Math.max(offsetEpochSec.current, minOffset);
 
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.width]);
+  }, [size.width, currentTime]);
 
   // ───────────────────────── Canvas drawing ───────────────────────────
   const draw = () => {
@@ -134,63 +279,92 @@ export default function Timeline() {
     ctx.fillRect(0, 0, size.width, size.height);
 
     const centreY = size.height / 2;
-
-    // Main horizontal line
-    ctx.strokeStyle = '#FFFFFF';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(0, centreY);
-    ctx.lineTo(size.width, centreY);
-    ctx.stroke();
-
     const secPerPx = scaleSecPerPx.current;
     const offsetSec = offsetEpochSec.current;
 
-    const step = chooseTickStep(secPerPx);
-    const firstTick = Math.floor(offsetSec / step) * step - step * 2; // prepend a couple extra
-    const lastTickSec = offsetSec + secPerPx * size.width + step * 2;
+    // Calculate timeline boundaries
+    const birthX = (BIRTH_DATE_EPOCH_SEC - offsetSec) / secPerPx;
+    const todayX = (currentTime - offsetSec) / secPerPx;
 
-    ctx.font = '12px monospace';
-    ctx.textAlign = 'center';
+    // Calculate left padding when near birth date
+    const leftPadding = birthX >= 0 && birthX <= LEFT_PADDING ? LEFT_PADDING - birthX : 0;
+
+    // Calculate adjusted positions
+    const adjustedBirthX = birthX + leftPadding;
+    const adjustedTodayX = todayX + leftPadding;
+
+    // Main horizontal timeline (from birth to today only), with left padding
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    // Ensure we draw from the visible start to the visible end
+    const timelineStartX = Math.max(0, adjustedBirthX);
+    const timelineEndX = Math.min(size.width, adjustedTodayX);
+    
+    if (timelineEndX > timelineStartX) {
+      ctx.moveTo(timelineStartX, centreY);
+      ctx.lineTo(timelineEndX, centreY);
+      ctx.stroke();
+    }
+
+    const step = chooseTickStep(secPerPx);
+    const startTime = offsetSec - step * 2;
+    const endTime = offsetSec + secPerPx * size.width + step * 2;
+    
+    // Generate actual calendar-based ticks
+    const ticks = generateTicks(startTime, endTime, step);
+
+    // Use Lora font directly
+    ctx.font = '12px Lora, serif';
+    ctx.textAlign = 'left'; // Changed to left align since labels are to the right of lines
     ctx.textBaseline = 'top';
 
-    for (let t = firstTick; t < lastTickSec; t += step) {
+    for (const t of ticks) {
       const x = (t - offsetSec) / secPerPx;
       if (x < -50 || x > size.width + 50) continue;
 
-      // Grey full-height bar
+      // Apply left padding to x position
+      const adjustedX = x + leftPadding;
+
+      // Grey full-height bar (always draw)
       ctx.strokeStyle = '#444444';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, size.height);
+      ctx.moveTo(adjustedX, 0);
+      ctx.lineTo(adjustedX, size.height);
       ctx.stroke();
 
-      // White tick on the main line
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(x, centreY - 8);
-      ctx.lineTo(x, centreY + 8);
-      ctx.stroke();
+      // White tick only within timeline bounds (birth to today)
+      if (t >= BIRTH_DATE_EPOCH_SEC && t <= currentTime) {
+        // White tick on the main line
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(adjustedX, centreY - 8);
+        ctx.lineTo(adjustedX, centreY + 8);
+        ctx.stroke();
+      }
 
-      // Label
+      // Labels at top of screen, to the right of gray lines (always draw)
       ctx.fillStyle = '#FFFFFF';
-      ctx.fillText(formatLabel(t, step), x, centreY + 12);
+      ctx.fillText(formatLabel(t, step), adjustedX + 5, 10); // 5px to the right of line, 10px from top
     }
 
-    // Red "today" line
-    const now = Date.now() / 1000;
-    const nowX = (now - offsetSec) / secPerPx;
-    if (nowX >= 0 && nowX <= size.width) {
+    // Red "today" line, with left padding
+    if (adjustedTodayX >= 0 && adjustedTodayX <= size.width) {
       ctx.strokeStyle = '#FF0000';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(nowX, 0);
-      ctx.lineTo(nowX, size.height);
+      ctx.moveTo(adjustedTodayX, 0);
+      ctx.lineTo(adjustedTodayX, size.height);
       ctx.stroke();
     }
   };
+
+  // Redraw when currentTime changes
+  useEffect(() => {
+    draw();
+  }, [currentTime, size.width, size.height]);
 
   // ───────────────────────── Interaction (pan/zoom) ───────────────────
   useEffect(() => {
@@ -210,7 +384,10 @@ export default function Timeline() {
     const onMouseMove = (e: MouseEvent) => {
       if (!isDragging.current) return;
       const deltaX = e.clientX - dragStartX.current;
-      offsetEpochSec.current = dragStartOffset.current - deltaX * scaleSecPerPx.current;
+      const newOffset = dragStartOffset.current - deltaX * scaleSecPerPx.current;
+      
+      // Prevent panning before birth date
+      offsetEpochSec.current = Math.max(newOffset, BIRTH_DATE_EPOCH_SEC);
       draw();
     };
 
@@ -223,12 +400,22 @@ export default function Timeline() {
       e.preventDefault();
       const rect = container.getBoundingClientRect();
       const pointerX = e.clientX - rect.left;
-      const timeAtPointer = offsetEpochSec.current + pointerX * scaleSecPerPx.current;
+      
+      // Account for left padding in zoom calculations
+      const secPerPx = scaleSecPerPx.current;
+      const offsetSec = offsetEpochSec.current;
+      const birthX = (BIRTH_DATE_EPOCH_SEC - offsetSec) / secPerPx;
+      const leftPadding = birthX >= 0 && birthX <= LEFT_PADDING ? LEFT_PADDING - birthX : 0;
+      
+      const adjustedPointerX = pointerX - leftPadding;
+      const timeAtPointer = offsetEpochSec.current + adjustedPointerX * scaleSecPerPx.current;
 
       const zoomFactor = Math.exp(e.deltaY * 0.001); // smooth exponential zoom
       scaleSecPerPx.current = Math.min(Math.max(scaleSecPerPx.current * zoomFactor, maxSecPerPx), minSecPerPx);
 
-      offsetEpochSec.current = timeAtPointer - pointerX * scaleSecPerPx.current;
+      const newOffset = timeAtPointer - adjustedPointerX * scaleSecPerPx.current;
+      // Prevent panning before birth date
+      offsetEpochSec.current = Math.max(newOffset, BIRTH_DATE_EPOCH_SEC);
       draw();
     };
 
@@ -244,10 +431,10 @@ export default function Timeline() {
       container.removeEventListener('wheel', onWheel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.width, size.height]);
+  }, [size.width, size.height, currentTime]);
 
   return (
-    <div ref={containerRef} className="w-full h-full bg-black cursor-grab select-none">
+    <div ref={containerRef} className="w-full h-full bg-black cursor-grab select-none font-lora">
       <canvas ref={canvasRef} />
     </div>
   );
