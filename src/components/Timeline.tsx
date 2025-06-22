@@ -639,6 +639,62 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
   const lastDragX = useRef<number>(0);
   const lastDragY = useRef<number>(0);
 
+  // Add state for sliding window animation
+  const [slidingWindowTime, setSlidingWindowTime] = useState<number | null>(null);
+  const [isSliding, setIsSliding] = useState(false);
+  const slidingAnimationRef = useRef<number | null>(null);
+
+  // Helper to get the earliest branch start (hardcoded for testing)
+  const getEarliestBranchStart = () => {
+    // Hardcoded to 1 Jan 2023 UTC
+    return new Date('2023-01-01T00:00:00Z').getTime() / 1000;
+  };
+
+  // Handler to start the sliding window animation
+  const startSlidingWindow = () => {
+    if (!displayBranches || displayBranches.length === 0) return;
+    setIsSliding(true);
+    const start = getEarliestBranchStart();
+    const end = Date.now() / 1000;
+    const duration = 10.0; // seconds for full animation (slower)
+    const animationStart = performance.now();
+    setSlidingWindowTime(start); // Always set to start value first
+
+    let running = true;
+
+    const animateSliding = (now: number) => {
+      if (!running) return;
+      const elapsed = (now - animationStart) / 1000;
+      const progress = Math.min(1, elapsed / duration);
+      const eased = easeInOutCubic(progress);
+      const nextTime = start + (end - start) * eased;
+      setSlidingWindowTime(progress >= 1 ? null : nextTime);
+      if (progress < 1) {
+        slidingAnimationRef.current = requestAnimationFrame(animateSliding);
+      } else {
+        setIsSliding(false);
+        setSlidingWindowTime(null);
+      }
+    };
+    if (slidingAnimationRef.current) cancelAnimationFrame(slidingAnimationRef.current);
+    slidingAnimationRef.current = requestAnimationFrame(animateSliding);
+
+    // Cleanup on unmount or restart
+    return () => { running = false; };
+  };
+
+  // Stop animation on unmount
+  useEffect(() => {
+    return () => {
+      if (slidingAnimationRef.current) cancelAnimationFrame(slidingAnimationRef.current);
+    };
+  }, []);
+
+  // Redraw when sliding window changes
+  useEffect(() => {
+    if (slidingWindowTime !== null) draw();
+  }, [slidingWindowTime]);
+
   // Update persisted data when new data arrives (but only if it's actually new)
   useEffect(() => {
     const now = Date.now();
@@ -1413,6 +1469,16 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
         ctx.fillText(currentDateTime, labelX, labelY);
       }
     }
+
+    // (at the end of the draw function, after all timeline drawing)
+    if (slidingWindowTime !== null) {
+      const windowX = (slidingWindowTime - offsetEpochSec.current) / scaleSecPerPx.current;
+      ctx.save();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(windowX, 0, size.width - windowX, size.height);
+      ctx.restore();
+    }
   };
 
   // Redraw when currentTime changes
@@ -1890,9 +1956,54 @@ export default function Timeline({ nodes, branches, loading }: TimelineProps) {
     draw();
   };
 
+  // Hardcoded sample data for testing
+  const sampleBranches: Branch[] = [
+    {
+      parentBranchId: '',
+      branchId: 'main-branch',
+      branchStart: '2023-01-01T00:00:00Z',
+      branchEnd: '',
+      branchName: 'Main',
+      branchSummary: 'Main timeline branch',
+    },
+  ];
+  const sampleNodes: Node[] = [
+    {
+      uuid: 'node-1',
+      branchId: 'main-branch',
+      timeStamp: '2023-01-05T12:00:00Z',
+      content: 'Started the project',
+      isUpdating: false,
+    },
+    {
+      uuid: 'node-2',
+      branchId: 'main-branch',
+      timeStamp: '2023-02-10T09:00:00Z',
+      content: 'First milestone reached',
+      isUpdating: false,
+    },
+    {
+      uuid: 'node-3',
+      branchId: 'main-branch',
+      timeStamp: '2023-03-15T18:30:00Z',
+      content: 'Major update released',
+      isUpdating: false,
+    },
+  ];
+  // Use sample data if props are empty
+  const displayBranches = branches && branches.length > 0 ? branches : sampleBranches;
+  const displayNodes = nodes && nodes.length > 0 ? nodes : sampleNodes;
+
   return (
     <div ref={containerRef} className="w-full h-full bg-black cursor-grab select-none font-lora relative">
       <canvas ref={canvasRef} />
+      <button
+        className="absolute top-32 left-4 z-60 bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 transition"
+        onClick={startSlidingWindow}
+        disabled={isSliding}
+      >
+        {isSliding ? 'Playing...' : 'Play Sliding Window'}
+      </button>
       
       {/* Loading State */}
       {loading && (
