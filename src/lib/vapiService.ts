@@ -353,6 +353,13 @@ export class VapiService {
 
   private static handleAddBranch(parameters: any) {
     const { parentBranchId, branchName, branchSummary, branchStart, branchEnd } = parameters;
+
+    if (branchName == undefined || branchSummary == undefined) {
+      return {
+        success: false,
+        message: 'Branch creation failed, name or summary undefined'
+      }
+    }
     
     const newBranch = TreeService.addBranch(parentBranchId, branchName, branchSummary, branchStart, branchEnd);
     return {

@@ -235,12 +235,12 @@ export class TreeService {
   }
 
   // Add a new branch
-  static addBranch(parentBranchId: string, branchName: string, branchSummary: string, timestamp?: string): Branch {
+  static addBranch(parentBranchId: string, branchName: string, branchSummary: string, branchStart?: string, branchEnd?: string): Branch {
     const newBranch = new Branch(
       parentBranchId,
       uuidv4(),
-      timestamp || new Date().toISOString(),
-      '', // no end date initially
+      branchStart || new Date().toISOString(),
+      branchEnd || '', // no end date initially if not provided
       branchName,
       branchSummary
     );

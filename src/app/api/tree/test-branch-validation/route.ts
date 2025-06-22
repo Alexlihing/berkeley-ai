@@ -8,7 +8,6 @@ export async function POST() {
       'root', 
       'Test Branch', 
       'A test branch for validation testing',
-      '2023-01-01T00:00:00Z',
       '2023-12-31T23:59:59Z'
     );
     

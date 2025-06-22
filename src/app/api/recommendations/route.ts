@@ -36,4 +36,26 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const recommendations = RecommendationService.generateRecommendations();
+    
+    return NextResponse.json({
+      success: true,
+      recommendations,
+      count: recommendations.length
+    });
+  } catch (error) {
+    console.error('Error generating recommendations:', error);
+    return NextResponse.json(
+      { 
+        success: false, 
+        error: 'Failed to generate recommendations',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
+      { status: 500 }
+    );
+  }
 } 
