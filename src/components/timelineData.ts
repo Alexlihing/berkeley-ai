@@ -25,7 +25,8 @@ export const PHD_BRANCH = 'phd-branch-uuid';
 export const RELATIONSHIP_BRANCH = 'relationship-branch-uuid';
 export const RELATIONSHIP_BRANCH2 = 'relationship-branch-uuid2';
 export const RELATIONSHIP_BRANCH3 = 'relationship-branch-uuid3';
-
+export const FRAT_BRANCH2 = 'frat-branch-uuid2';
+export const TEST_BRANCH = 'test-branch-uuid';
 // Branches
 export const branches: Branch[] = [
   {
@@ -50,6 +51,14 @@ export const branches: Branch[] = [
     branchStart: '2003-09-01',
     branchEnd: '2004-06-01',
     branchName: 'Fraternity',
+    branchSummary: 'Joined a fraternity during MIT.',
+  },
+  {
+    parentBranchId: FRAT_BRANCH,
+    branchId: FRAT_BRANCH2,
+    branchStart: '2003-12-01',
+    branchEnd: '2004-02-01',
+    branchName: 'Fraternity 2',
     branchSummary: 'Joined a fraternity during MIT.',
   },
   {
@@ -83,6 +92,14 @@ export const branches: Branch[] = [
     branchEnd: '2001-11-01',
     branchName: 'Relationship in Late 20s',
     branchSummary: 'A serious relationship before deciding to go back to school.',
+  },
+  {
+    parentBranchId: MAIN_BRANCH,
+    branchId: TEST_BRANCH,
+    branchStart: '2005-03-15',
+    branchEnd: '2007-05-15',
+    branchName: 'Test Branch',
+    branchSummary: 'A test branch.',
   }
 ];
 

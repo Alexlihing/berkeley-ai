@@ -27,6 +27,7 @@ const BRANCH_HEIGHT = 4; // height of branch line
 const NODE_RADIUS = 6; // radius of node circles
 const TOOLTIP_OFFSET = 10; // pixels offset for tooltip
 const CONNECTOR_ARC_RADIUS = 10; // radius of the 90-degree arc in connectors
+const BRANCH_LABEL_LEFT_PADDING = 10; // left padding for branch labels
 
 // Branch colors - more diverse palette with better variance
 const BRANCH_COLORS = [
@@ -313,14 +314,24 @@ function drawCurvedConnector(
   parentY: number,
   childY: number,
   color: string,
-  lineWidth: number
+  lineWidth: number,
+  availableWidth?: number // Available horizontal space for the branch
 ): number {
   ctx.strokeStyle = color;
   ctx.lineWidth = lineWidth;
   ctx.lineCap = 'round';
 
   const isGoingUp = childY < parentY;
-  const arcRadius = CONNECTOR_ARC_RADIUS;
+  
+  // Dynamically adjust arc radius based on available horizontal space
+  let arcRadius = CONNECTOR_ARC_RADIUS;
+  if (availableWidth !== undefined && availableWidth > 0) {
+    const minRadius = 2;
+    const scaleThreshold = CONNECTOR_ARC_RADIUS * 2;
+    if (availableWidth < scaleThreshold) {
+      arcRadius = Math.max(minRadius, (availableWidth / scaleThreshold) * CONNECTOR_ARC_RADIUS);
+    }
+  }
 
   // If distance is too small for an arc, draw a straight line.
   if (Math.abs(childY - parentY) < arcRadius) {
@@ -363,13 +374,23 @@ function drawCurvedEndConnector(
   parentY: number,
   childY: number,
   color: string,
-  lineWidth: number
+  lineWidth: number,
+  availableWidth?: number // Available horizontal space for the branch
 ): number {
   ctx.strokeStyle = color;
   ctx.lineWidth = lineWidth;
   ctx.lineCap = 'round';
 
-  const arcRadius = CONNECTOR_ARC_RADIUS;
+  // Dynamically adjust arc radius based on available horizontal space
+  let arcRadius = CONNECTOR_ARC_RADIUS;
+  if (availableWidth !== undefined && availableWidth > 0) {
+    const minRadius = 2;
+    const scaleThreshold = CONNECTOR_ARC_RADIUS * 2;
+    if (availableWidth < scaleThreshold) {
+      arcRadius = Math.max(minRadius, (availableWidth / scaleThreshold) * CONNECTOR_ARC_RADIUS);
+    }
+  }
+  
   // The horizontal line of the branch should end before the curve starts.
   const branchLineEndX = x - arcRadius;
 
@@ -508,6 +529,87 @@ function drawBirthdayNode(
     ctx.arc(sparkleX, sparkleY, 2, 0, 2 * Math.PI);
     ctx.fill();
   }
+}
+
+// ─────────────────────────────── Branch layout helper ───────────────────────────────
+// Compute vertical positions for every branch while only introducing extra spacing
+// when branches actually overlap in time. This keeps the diagram compact while
+// still decluttering crowded areas.
+type BranchSide = 'above' | 'below';
+function computeBranchLayout(
+  centreY: number,
+  currentTime: number
+): { positions: Map<string, number>; sides: Map<string, BranchSide> } {
+  const positions = new Map<string, number>();
+  const sides = new Map<string, BranchSide>();
+
+  // Main branch fixed at centre
+  positions.set(MAIN_BRANCH, centreY);
+  sides.set(MAIN_BRANCH, 'above');
+
+  // Utility to decide if two ranges [aStart,aEnd] and [bStart,bEnd] overlap
+  const rangesOverlap = (
+    aStart: number,
+    aEnd: number,
+    bStart: number,
+    bEnd: number
+  ) => aStart <= bEnd && aEnd >= bStart;
+
+  // Keep track of occupied time ranges at each vertical level per side
+  const levelsAbove: { start: number; end: number }[][] = [];
+  const levelsBelow: { start: number; end: number }[][] = [];
+
+  // Order branches by start time for deterministic placement
+  const sortedBranches = branches
+    .filter((b) => b.branchId !== MAIN_BRANCH)
+    .sort(
+      (a, b) => isoToEpochSeconds(a.branchStart) - isoToEpochSeconds(b.branchStart)
+    );
+
+  let nextSideAbove = true; // Toggle for children of main branch
+
+  sortedBranches.forEach((branch) => {
+    // Decide which side (above/below the main line) to use
+    let side: BranchSide;
+    if (branch.parentBranchId === MAIN_BRANCH) {
+      side = nextSideAbove ? 'above' : 'below';
+      nextSideAbove = !nextSideAbove;
+    } else {
+      side = sides.get(branch.parentBranchId!) || 'above';
+    }
+    sides.set(branch.branchId, side);
+
+    const branchStart = isoToEpochSeconds(branch.branchStart);
+    const branchEnd = branch.branchEnd
+      ? isoToEpochSeconds(branch.branchEnd)
+      : currentTime;
+
+    const levels = side === 'above' ? levelsAbove : levelsBelow;
+
+    // Find the first level that has no time overlap with this branch
+    let levelIdx = 0;
+    for (; levelIdx < levels.length; levelIdx++) {
+      const overlaps = levels[levelIdx].some((r) =>
+        rangesOverlap(branchStart, branchEnd, r.start, r.end)
+      );
+      if (!overlaps) break;
+    }
+
+    // Ensure the level array exists
+    if (!levels[levelIdx]) {
+      levels[levelIdx] = [];
+    }
+    levels[levelIdx].push({ start: branchStart, end: branchEnd });
+
+    // Translate level index to actual Y coordinate
+    const y =
+      side === 'above'
+        ? centreY - (levelIdx + 1) * BRANCH_SPACING
+        : centreY + (levelIdx + 1) * BRANCH_SPACING;
+    positions.set(branch.branchId, y);
+  });
+
+  return { positions, sides };
 }
 
 export default function Timeline() {
@@ -763,7 +865,7 @@ export default function Timeline() {
     }
 
     // Determine two tick steps (current coarse and next finer) for cross-fading
-    const MIN_TICK_PX = 150;
+    const MIN_TICK_PX = 150;  
     const coarseStep = chooseTickStep(secPerPx, MIN_TICK_PX);
     const stepIndex = TICK_STEPS.indexOf(coarseStep);
     const fineStep = stepIndex > 0 ? TICK_STEPS[stepIndex - 1] : null;
@@ -835,55 +937,8 @@ export default function Timeline() {
 
     // ───────────────────────── Branch and Node Visualization ─────────────────────────
     
-    // Calculate branch positions (vertical spacing) with improved distribution
-    const branchPositions = new Map<string, number>();
-    const branchSide = new Map<string, 'above' | 'below'>(); // Track which side each branch is on
-
-    // Place the main "Life" branch at center
-    branchPositions.set(MAIN_BRANCH, centreY);
-    branchSide.set(MAIN_BRANCH, 'above'); // Main branch doesn't need special text positioning
-
-    // Get all non-main branches
-    const otherBranches = branches.filter(b => b.branchId !== MAIN_BRANCH);
-    
-    // Sort branches by start date for more logical distribution
-    otherBranches.sort((a, b) => {
-      const aStart = isoToEpochSeconds(a.branchStart);
-      const bStart = isoToEpochSeconds(b.branchStart);
-      return aStart - bStart;
-    });
-
-    // Distribute branches above and below the main branch
-    // Use alternating pattern but also consider branch relationships
-    otherBranches.forEach((branch, idx) => {
-      // Determine if branch should go above or below
-      // Use a pattern that alternates but also considers branch relationships
-      let side: 'above' | 'below';
-      
-      if (branch.parentBranchId === MAIN_BRANCH) {
-        // Direct children of main branch alternate above/below
-        side = idx % 2 === 0 ? 'above' : 'below';
-      } else {
-        // Sub-branches (like fraternity under MIT) go on the same side as their parent
-        const parentSide = branchSide.get(branch.parentBranchId!);
-        side = parentSide || 'above'; // Default to above for sub-branches
-      }
-      
-      branchSide.set(branch.branchId, side);
-      
-      // Calculate vertical position
-      // Count how many branches are already on this side
-      const branchesOnSameSide = otherBranches
-        .slice(0, idx)
-        .filter(b => branchSide.get(b.branchId) === side).length;
-      
-      const branchIndex = branchesOnSameSide + 1; // +1 because we start counting from 1
-      const branchY = side === 'above' 
-        ? centreY - branchIndex * BRANCH_SPACING
-        : centreY + branchIndex * BRANCH_SPACING;
-      
-      branchPositions.set(branch.branchId, branchY);
-    });
+    // Use the new overlap-aware algorithm to determine vertical placement.
+    const { positions: branchPositions, sides: branchSide } = computeBranchLayout(centreY, currentTime);
 
     // Draw branches (skip the main "Life" branch so its line is invisible)
     branches.forEach(branch => {
@@ -915,12 +970,12 @@ export default function Timeline() {
           
           // Draw connector at start point and get new start for the horizontal line
           if (startX >= 0 && startX <= size.width) {
-             finalStartX = drawCurvedConnector(ctx, startX, parentBranchY, branchY, getBranchColor(branch.branchId), BRANCH_HEIGHT);
+             finalStartX = drawCurvedConnector(ctx, startX, parentBranchY, branchY, getBranchColor(branch.branchId), BRANCH_HEIGHT, endX - startX);
           }
           
           // Draw connector at end point (if branch has an end)
           if (branch.branchEnd && endX >= 0 && endX <= size.width) {
-            finalEndX = drawCurvedEndConnector(ctx, endX, parentBranchY, branchY, getBranchColor(branch.branchId), BRANCH_HEIGHT);
+            finalEndX = drawCurvedEndConnector(ctx, endX, parentBranchY, branchY, getBranchColor(branch.branchId), BRANCH_HEIGHT, endX - startX);
           }
         }
       }
@@ -955,24 +1010,74 @@ export default function Timeline() {
         ctx.arc(startX, markerY, 7, 0, 2 * Math.PI);
         ctx.fill();
         
-        // Branch name label - position based on side
+        // Branch name label with adaptive fade based on zoom
         ctx.font = '14px Lora, serif';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillStyle = getBranchColor(branch.branchId);
-        
-        const labelY = side === 'above' ? branchY - 15 : branchY + 15;
-        ctx.fillText(branch.branchName, startX, labelY);
+
+        // Measure text and available on-screen branch width
+        const textWidth = ctx.measureText(branch.branchName).width;
+        const visibleStart = Math.max(0, finalStartX);
+        const visibleEnd = Math.min(size.width, finalEndX);
+        const visibleWidth = Math.max(0, visibleEnd - visibleStart);
+
+        // Fade factor: 0 when not enough space, 1 when we have 1.5× space, linear in-between
+        let labelAlpha = (visibleWidth - textWidth) / (textWidth * 0.5);
+        labelAlpha = Math.max(0, Math.min(1, labelAlpha));
+
+        if (labelAlpha > 0.01) {
+          ctx.fillStyle = getBranchColor(branch.branchId);
+          ctx.globalAlpha = labelAlpha;
+          const labelY = side === 'above' ? branchY - 15 : branchY + 15;
+          // Position label with left padding, but never to the left of the start marker
+          const labelX = Math.max(startX, BRANCH_LABEL_LEFT_PADDING);
+          ctx.fillText(branch.branchName, labelX, labelY);
+          ctx.globalAlpha = 1; // reset
+        }
       } else if (startX < -10 && endX > 0) {
         // Start node is off-screen to the left, but branch line is still visible
-        // Position label at left edge of window
+        // Position label at left edge of window with padding
         ctx.font = '14px Lora, serif';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillStyle = getBranchColor(branch.branchId);
-        
-        const labelY = side === 'above' ? branchY - 15 : branchY + 15;
-        ctx.fillText(branch.branchName, 0, labelY);
+
+        const textWidth = ctx.measureText(branch.branchName).width;
+        const visibleStart = BRANCH_LABEL_LEFT_PADDING;
+        const visibleEnd = Math.min(size.width, finalEndX);
+        const visibleWidth = Math.max(0, visibleEnd - visibleStart);
+
+        let labelAlpha = (visibleWidth - textWidth) / (textWidth * 0.5);
+        labelAlpha = Math.max(0, Math.min(1, labelAlpha));
+
+        if (labelAlpha > 0.01) {
+          ctx.fillStyle = getBranchColor(branch.branchId);
+          ctx.globalAlpha = labelAlpha;
+          const labelY = side === 'above' ? branchY - 15 : branchY + 15;
+          ctx.fillText(branch.branchName, BRANCH_LABEL_LEFT_PADDING, labelY);
+          ctx.globalAlpha = 1;
+        }
+      } else if (startX > size.width && finalStartX <= size.width) {
+        // Branch start is off-screen to the right, but the branch line is visible
+        // Position label at left edge with padding
+        ctx.font = '14px Lora, serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+
+        const textWidth = ctx.measureText(branch.branchName).width;
+        const visibleStart = BRANCH_LABEL_LEFT_PADDING;
+        const visibleEnd = Math.min(size.width, finalEndX);
+        const visibleWidth = Math.max(0, visibleEnd - visibleStart);
+
+        let labelAlpha = (visibleWidth - textWidth) / (textWidth * 0.5);
+        labelAlpha = Math.max(0, Math.min(1, labelAlpha));
+
+        if (labelAlpha > 0.01) {
+          ctx.fillStyle = getBranchColor(branch.branchId);
+          ctx.globalAlpha = labelAlpha;
+          const labelY = side === 'above' ? branchY - 15 : branchY + 15;
+          ctx.fillText(branch.branchName, BRANCH_LABEL_LEFT_PADDING, labelY);
+          ctx.globalAlpha = 1;
+        }
       }
 
       // Draw branch end marker (if not ongoing)
@@ -1014,37 +1119,76 @@ export default function Timeline() {
       }
     });
 
-    // Draw nodes
-    nodes.forEach(node => {
-      const branchY = branchPositions.get(node.branchId);
-      const side = branchSide.get(node.branchId);
-      if (branchY === undefined || side === undefined) return;
+    // Pre-compute all branch start/end points for collision detection
+    const branchMarkers: { x: number; type: 'start' | 'end' }[] = [];
+    branches.forEach(branch => {
+      if (branch.branchId === MAIN_BRANCH) return;
+      
+      const startEpoch = isoToEpochSeconds(branch.branchStart);
+      const endEpoch = branch.branchEnd ? isoToEpochSeconds(branch.branchEnd) : currentTime;
+      
+      const startX = (startEpoch - offsetSec) / secPerPx;
+      const endX = (endEpoch - offsetSec) / secPerPx;
+      
+      // Only include markers that are visible on screen
+      if (startX >= -20 && startX <= size.width + 20) {
+        branchMarkers.push({ x: startX, type: 'start' });
+      }
+      if (branch.branchEnd && endX >= -20 && endX <= size.width + 20) {
+        branchMarkers.push({ x: endX, type: 'end' });
+      }
+    });
 
-      const nodeEpoch = isoToEpochSeconds(node.timeStamp);
-      const nodeX = (nodeEpoch - offsetSec) / secPerPx;
+    // Pre-compute node positions and text dimensions for collision detection
+    const visibleNodes = nodes
+      .map(node => {
+        const branchY = branchPositions.get(node.branchId);
+        const side = branchSide.get(node.branchId);
+        if (branchY === undefined || side === undefined) return null;
 
-      // Only draw if node is visible
-      if (nodeX < -20 || nodeX > size.width + 20) return;
+        const nodeEpoch = isoToEpochSeconds(node.timeStamp);
+        const nodeX = (nodeEpoch - offsetSec) / secPerPx;
 
-      // Check if this is a birthday node and render specially
-      if (isBirthdayNode(node)) {
-        drawBirthdayNode(ctx, nodeX, branchY, 20); // Extra large size for birthday
-        
-        // Draw birthday label with special styling
+        // Only include visible nodes
+        if (nodeX < -20 || nodeX > size.width + 20) return null;
+
         const shortContent = node.content.length > 30 ? node.content.substring(0, 30) + '...' : node.content;
-        ctx.font = 'bold 14px Lora, serif'; // Bold and larger font for birthday
-        ctx.textAlign = 'center';
-        ctx.textBaseline = side === 'above' ? 'top' : 'bottom';
-        ctx.fillStyle = '#FFD700'; // Gold color for birthday text
+        const isBirthday = isBirthdayNode(node);
         
-        const labelY = side === 'above' ? branchY + 35 : branchY - 35; // More offset due to larger node
-        ctx.fillText(shortContent, nodeX, labelY);
+        // Set font context to measure text
+        ctx.font = isBirthday ? 'bold 14px Lora, serif' : '12px Lora, serif';
+        const textWidth = ctx.measureText(shortContent).width;
+        const labelY = side === 'above' 
+          ? branchY + (isBirthday ? 35 : 15)
+          : branchY - (isBirthday ? 35 : 15);
+
+        return {
+          node,
+          nodeX,
+          branchY,
+          side,
+          shortContent,
+          isBirthday,
+          textWidth,
+          labelY,
+          textLeft: nodeX - textWidth / 2,
+          textRight: nodeX + textWidth / 2
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+
+    // Draw nodes with collision-aware labels
+    visibleNodes.forEach((nodeInfo, index) => {
+      const { node, nodeX, branchY, side, shortContent, isBirthday, textWidth, labelY, textLeft, textRight } = nodeInfo;
+
+      // Draw the node circle first (always visible)
+      if (isBirthday) {
+        drawBirthdayNode(ctx, nodeX, branchY, 20);
       } else {
-        // Regular node rendering
         const branchColor = getBranchColor(node.branchId);
         
         // Draw background outline first
-        ctx.strokeStyle = '#000000'; // Black background outline
+        ctx.strokeStyle = '#000000';
         ctx.lineWidth = 4;
         ctx.beginPath();
         ctx.arc(nodeX, branchY, NODE_RADIUS, 0, 2 * Math.PI);
@@ -1055,16 +1199,57 @@ export default function Timeline() {
         ctx.beginPath();
         ctx.arc(nodeX, branchY, NODE_RADIUS - 1, 0, 2 * Math.PI);
         ctx.fill();
+      }
 
-        // Draw node label - position based on side
-        const shortContent = node.content.length > 30 ? node.content.substring(0, 30) + '...' : node.content;
-        ctx.font = '12px Lora, serif';
+      // Check for collisions to determine label visibility
+      let labelAlpha = 1;
+      const fadeDistance = 20; // Distance over which fading occurs
+
+      // Check collision with branch markers - fade based on distance
+      for (const marker of branchMarkers) {
+        const distanceToMarker = Math.min(
+          Math.abs(marker.x - textLeft),
+          Math.abs(marker.x - textRight),
+          marker.x >= textLeft && marker.x <= textRight ? 0 : Infinity
+        );
+        
+        if (distanceToMarker < fadeDistance) {
+          const fadeAlpha = distanceToMarker / fadeDistance;
+          labelAlpha = Math.min(labelAlpha, fadeAlpha);
+        }
+      }
+
+      // Check collision with other node labels - fade based on overlap amount
+      for (let i = 0; i < index; i++) {
+        const otherNode = visibleNodes[i];
+        
+        // Check if they're on similar vertical levels
+        if (Math.abs(labelY - otherNode.labelY) < 20) {
+          // Calculate horizontal overlap
+          const overlapLeft = Math.max(textLeft, otherNode.textLeft);
+          const overlapRight = Math.min(textRight, otherNode.textRight);
+          const overlapWidth = Math.max(0, overlapRight - overlapLeft);
+          
+          if (overlapWidth > 0) {
+            // Calculate overlap as percentage of current text width
+            const overlapRatio = overlapWidth / textWidth;
+            // Fade out more aggressively as overlap increases
+            const fadeAlpha = Math.max(0, 1 - overlapRatio * 2); // Fade starts at 50% overlap
+            labelAlpha = Math.min(labelAlpha, fadeAlpha);
+          }
+        }
+      }
+
+      // Draw the label if it should be visible
+      if (labelAlpha > 0.01) {
+        ctx.font = isBirthday ? 'bold 14px Lora, serif' : '12px Lora, serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = side === 'above' ? 'top' : 'bottom';
-        ctx.fillStyle = '#FFFFFF';
+        ctx.fillStyle = isBirthday ? '#FFD700' : '#FFFFFF';
+        ctx.globalAlpha = labelAlpha;
         
-        const labelY = side === 'above' ? branchY + 15 : branchY - 15;
         ctx.fillText(shortContent, nodeX, labelY);
+        ctx.globalAlpha = 1; // reset
       }
     });
 
@@ -1165,52 +1350,7 @@ export default function Timeline() {
       const offsetSec = offsetEpochSec.current;
       
       // Calculate branch positions using the same algorithm as the drawing function
-      const branchPositions = new Map<string, number>();
-      const branchSide = new Map<string, 'above' | 'below'>();
-
-      // Place the main "Life" branch at center
-      branchPositions.set(MAIN_BRANCH, centreY);
-      branchSide.set(MAIN_BRANCH, 'above');
-
-      // Get all non-main branches
-      const otherBranches = branches.filter(b => b.branchId !== MAIN_BRANCH);
-      
-      // Sort branches by start date for more logical distribution
-      otherBranches.sort((a, b) => {
-        const aStart = isoToEpochSeconds(a.branchStart);
-        const bStart = isoToEpochSeconds(b.branchStart);
-        return aStart - bStart;
-      });
-
-      // Distribute branches above and below the main branch
-      otherBranches.forEach((branch, idx) => {
-        // Determine if branch should go above or below
-        let side: 'above' | 'below';
-        
-        if (branch.parentBranchId === MAIN_BRANCH) {
-          // Direct children of main branch alternate above/below
-          side = idx % 2 === 0 ? 'above' : 'below';
-        } else {
-          // Sub-branches (like fraternity under MIT) go on the same side as their parent
-          const parentSide = branchSide.get(branch.parentBranchId!);
-          side = parentSide || 'above'; // Default to above for sub-branches
-        }
-        
-        branchSide.set(branch.branchId, side);
-        
-        // Calculate vertical position
-        // Count how many branches are already on this side
-        const branchesOnSameSide = otherBranches
-          .slice(0, idx)
-          .filter(b => branchSide.get(b.branchId) === side).length;
-        
-        const branchIndex = branchesOnSameSide + 1;
-        const branchY = side === 'above' 
-          ? centreY - branchIndex * BRANCH_SPACING
-          : centreY + branchIndex * BRANCH_SPACING;
-        
-        branchPositions.set(branch.branchId, branchY);
-      });
+      const { positions: branchPositions, sides: branchSide } = computeBranchLayout(centreY, currentTime);
 
       let foundTooltip = false;
 
